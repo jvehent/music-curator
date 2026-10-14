@@ -12,6 +12,12 @@ build/
 dist/
 *.egg-info/
 
+# Local secrets & API configs
+config.json
+*.local.json
+.env
+*.env
+
 # Logs and databases
 *.log
 manifest.json
