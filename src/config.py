@@ -1,8 +1,9 @@
+import os
+import unicodedata
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Optional
-import unicodedata
-import re
 
 SUPPORTED_EXTENSIONS = {".mp3", ".ogg", ".wav", ".flac", ".m4a", ".aac", ".wma"}
 
@@ -84,7 +85,7 @@ class CuratorConfig:
     # Smart AI & Audio Fingerprinting Settings
     gemini_api_key: Optional[str] = None
     acoustid_api_key: Optional[str] = None
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-3.8-flash"
 
     write_tags_to_destination: bool = True
     copy_album_art: bool = False     # False for Uconnect to prevent non-audio clutter
