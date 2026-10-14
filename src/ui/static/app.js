@@ -188,6 +188,7 @@ function renderTable() {
       <td><span class="badge-confidence ${confClass}">${item.confidence}</span></td>
       <td style="text-align: right;">
         <div class="table-actions" style="justify-content: flex-end;">
+          <button class="action-icon-btn" title="Identify with Acoustic Fingerprint (Shazam-style)" onclick="fingerprintTrackDirect(${originalIndex})">🎧</button>
           <button class="action-icon-btn" title="Edit Metadata" onclick="openEditModal(${originalIndex})">✎</button>
         </div>
       </td>
@@ -375,4 +376,152 @@ async function openDestFolder() {
   if (destPath) {
     await fetch(`/api/open-folder?path=${encodeURIComponent(destPath)}`);
   }
+}
+
+// Settings Modal
+async function openSettingsModal() {
+  try {
+    const res = await fetch('/api/settings');
+    const data = await res.json();
+
+    if (data.gemini_key_preview) {
+      document.getElementById('geminiApiKeyInput').placeholder = `Configured (${data.gemini_key_preview})`;
+    }
+    if (data.acoustid_key_preview) {
+      document.getElementById('acoustidApiKeyInput').placeholder = `Configured (${data.acoustid_key_preview})`;
+    }
+    if (data.gemini_model) {
+      document.getElementById('geminiModelSelect').value = data.gemini_model;
+    }
+    if (data.has_fpcalc) {
+      document.getElementById('fingerprintEngineStatus').textContent = '✓ Chromaprint (fpcalc 1.6.1) engine installed and ready';
+      document.getElementById('fingerprintEngineStatus').style.color = '#34d399';
+    } else {
+      document.getElementById('fingerprintEngineStatus').textContent = '⚠ fpcalc engine not found. Fingerprinting will be unavailable.';
+      document.getElementById('fingerprintEngineStatus').style.color = '#f87171';
+    }
+  } catch (e) {
+    console.error('Failed to load settings:', e);
+  }
+  document.getElementById('settingsModal').style.display = 'flex';
+}
+
+function closeSettingsModal() {
+  document.getElementById('settingsModal').style.display = 'none';
+}
+
+async function saveSettings() {
+  const geminiKey = document.getElementById('geminiApiKeyInput').value.trim();
+  const acoustidKey = document.getElementById('acoustidApiKeyInput').value.trim();
+  const model = document.getElementById('geminiModelSelect').value;
+
+  const payload = { gemini_model: model };
+  if (geminiKey) payload.gemini_api_key = geminiKey;
+  if (acoustidKey) payload.acoustid_api_key = acoustidKey;
+
+  try {
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    alert('Settings saved successfully!');
+    closeSettingsModal();
+  } catch (err) {
+    alert(`Failed to save settings: ${err.message}`);
+  }
+}
+
+// AI Album Resolver
+async function triggerAiResolve() {
+  const btn = document.getElementById('btnAiResolve');
+  btn.disabled = true;
+  btn.textContent = '🤖 Analyzing with AI...';
+  setStatus('Resolving unknown album metadata using Gemini AI...');
+
+  try {
+    const res = await fetch('/api/ai-resolve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      if (data.detail && data.detail.includes('API Key is not configured')) {
+        alert('Please configure your Gemini API Key in "AI & Fingerprint Settings" to use AI recognition.');
+        openSettingsModal();
+        return;
+      }
+      throw new Error(data.detail || 'AI resolution failed');
+    }
+
+    if (data.total_updated > 0) {
+      alert(`🎉 Gemini AI successfully resolved ${data.total_updated} tracks across ${data.resolutions.length} album(s)!`);
+      if (data.plan) {
+        allPlanItems = data.plan;
+        updateCounts();
+        renderTable();
+      }
+      setStatus(`AI Resolution complete: ${data.total_updated} tracks updated`);
+    } else {
+      alert(data.message || 'No unknown tracks required AI resolution.');
+      setStatus('Ready');
+    }
+  } catch (err) {
+    alert(`AI Resolution Error: ${err.message}`);
+    setStatus('AI Resolution error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🤖 AI Resolve Unknowns';
+  }
+}
+
+// Acoustic Fingerprint Matching
+async function fingerprintTrackDirect(index) {
+  setStatus(`Generating acoustic fingerprint for track #${index + 1}...`);
+  try {
+    const res = await fetch('/api/fingerprint-track', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ index: index })
+    });
+    const data = await res.json();
+
+    if (data.status === 'matched') {
+      const s = data.suggested;
+      if (confirm(`🎧 Acoustic Fingerprint Match Found!\nScore: ${Math.round(s.score * 100)}%\nArtist: ${s.artist}\nTitle: ${s.title}\nAlbum: ${s.album || 'Unknown'}\n\nApply this match to track?`)) {
+        await fetch('/api/update-track', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            index: index,
+            artist: s.artist,
+            title: s.title,
+            album: s.album || undefined
+          })
+        });
+        // Refresh plan
+        await triggerPlan();
+        setStatus(`Applied fingerprint match for "${s.title}"`);
+      }
+    } else if (data.details && data.details.error) {
+      alert(`Acoustic Fingerprint Result:\n${data.details.error}`);
+      if (data.details.has_fingerprint) {
+        openSettingsModal();
+      }
+    } else {
+      alert(`Fingerprint generated, but no match was found in the AcoustID database.`);
+    }
+  } catch (err) {
+    alert(`Fingerprint matching error: ${err.message}`);
+  } finally {
+    setStatus('Ready');
+  }
+}
+
+async function fingerprintCurrentTrack() {
+  if (currentEditIndex === null) return;
+  await fingerprintTrackDirect(currentEditIndex);
+  closeEditModal();
 }

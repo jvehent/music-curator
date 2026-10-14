@@ -9,13 +9,15 @@ from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from pydantic import BaseModel
 import uvicorn
 
-from ..config import CuratorConfig
+from ..config import CuratorConfig, load_persistent_config, save_persistent_config
 from ..scanner import MusicScanner
 from ..organizer.planner import OrganizationPlanner, PlanItem
 from ..organizer.copier import MusicCopier, CopyProgress
 from ..organizer.manifest import write_manifests
 from ..metadata.musicbrainz import search_release, search_recording
 from ..metadata.models import TrackMetadata
+from ..metadata.ai_resolver import GeminiAlbumResolver
+from ..metadata.fingerprint import AcousticFingerprinter
 
 app = FastAPI(title="Harmoniq - Music Curator & Organizer")
 
@@ -27,9 +29,11 @@ class SessionState:
         self.tracks: List[TrackMetadata] = []
         self.art_map: Dict[Path, List[Path]] = {}
         self.plan: List[PlanItem] = []
-        self.config: CuratorConfig = CuratorConfig()
+        self.config: CuratorConfig = load_persistent_config()
         self.copier: Optional[MusicCopier] = None
         self.copy_progress: CopyProgress = CopyProgress(status="idle")
+        self.ai_resolver: GeminiAlbumResolver = GeminiAlbumResolver(api_key=self.config.gemini_api_key)
+        self.fingerprinter: AcousticFingerprinter = AcousticFingerprinter(api_key=self.config.acoustid_api_key)
         self.lock = threading.Lock()
 
 state = SessionState()
@@ -171,6 +175,151 @@ def api_search_mb(req: MBSearchRequest):
     else:
         results = search_recording(req.artist, req.title)
     return {"results": results}
+
+
+class SettingsRequest(BaseModel):
+    gemini_api_key: Optional[str] = None
+    acoustid_api_key: Optional[str] = None
+    gemini_model: Optional[str] = "gemini-2.5-flash"
+
+
+class AIResolveRequest(BaseModel):
+    album_name: Optional[str] = None
+    track_indices: Optional[List[int]] = None
+
+
+class FingerprintRequest(BaseModel):
+    index: int
+
+
+@app.get("/api/settings")
+def api_get_settings():
+    with state.lock:
+        return {
+            "has_gemini_key": bool(state.config.gemini_api_key),
+            "gemini_key_preview": f"{state.config.gemini_api_key[:6]}...{state.config.gemini_api_key[-4:]}" if state.config.gemini_api_key else "",
+            "has_acoustid_key": bool(state.config.acoustid_api_key),
+            "acoustid_key_preview": f"{state.config.acoustid_api_key[:4]}...{state.config.acoustid_api_key[-3:]}" if state.config.acoustid_api_key else "",
+            "has_fpcalc": state.fingerprinter.is_available(),
+            "gemini_model": state.config.gemini_model,
+            "uconnect_mode": state.config.uconnect_mode,
+            "artwork_action": state.config.artwork_action,
+        }
+
+
+@app.post("/api/settings")
+def api_update_settings(req: SettingsRequest):
+    with state.lock:
+        updates = {}
+        if req.gemini_api_key is not None:
+            state.config.gemini_api_key = req.gemini_api_key.strip() or None
+            updates["gemini_api_key"] = state.config.gemini_api_key
+            state.ai_resolver = GeminiAlbumResolver(api_key=state.config.gemini_api_key, model=state.config.gemini_model)
+
+        if req.acoustid_api_key is not None:
+            state.config.acoustid_api_key = req.acoustid_api_key.strip() or None
+            updates["acoustid_api_key"] = state.config.acoustid_api_key
+            state.fingerprinter = AcousticFingerprinter(api_key=state.config.acoustid_api_key)
+
+        if req.gemini_model is not None:
+            state.config.gemini_model = req.gemini_model
+            updates["gemini_model"] = req.gemini_model
+
+        save_persistent_config(updates)
+        return {"status": "saved"}
+
+
+@app.post("/api/ai-resolve")
+def api_ai_resolve(req: AIResolveRequest):
+    with state.lock:
+        if not state.tracks:
+            raise HTTPException(status_code=400, detail="No tracks scanned yet.")
+        if not state.ai_resolver.is_configured():
+            raise HTTPException(status_code=400, detail="Gemini API Key is not configured. Please enter your API key in Settings.")
+
+        # Determine tracks to resolve
+        if req.track_indices:
+            target_tracks = [state.tracks[i] for i in req.track_indices if 0 <= i < len(state.tracks)]
+        elif req.album_name:
+            target_tracks = [t for t in state.tracks if t.album == req.album_name]
+        else:
+            # Default to all tracks with low/medium confidence or Unknown
+            target_tracks = [t for t in state.tracks if t.confidence in {"low", "medium"} or "Unknown" in t.artist or "Unknown" in t.album]
+
+        if not target_tracks:
+            return {"status": "no_tracks", "message": "No matching tracks need AI resolution."}
+
+        # Group by parent directory
+        groups: Dict[str, List[TrackMetadata]] = {}
+        for t in target_tracks:
+            groups.setdefault(t.file_path.parent.name, []).append(t)
+
+        resolutions = []
+        total_updated = 0
+
+        for folder_name, folder_tracks in groups.items():
+            rel = ""
+            if state.source_dir:
+                try:
+                    rel = str(folder_tracks[0].file_path.parent.relative_to(state.source_dir))
+                except Exception:
+                    pass
+
+            res = state.ai_resolver.resolve_album_context(
+                folder_name=folder_name,
+                tracks=folder_tracks,
+                relative_path=rel
+            )
+            if res.get("success"):
+                updated = state.ai_resolver.apply_resolution(folder_tracks, res)
+                total_updated += updated
+                resolutions.append({
+                    "folder": folder_name,
+                    "artist": res.get("artist"),
+                    "album": res.get("album"),
+                    "year": res.get("year"),
+                    "genre": res.get("genre"),
+                    "tracks_updated": updated,
+                })
+
+        # Recompute plan if destination is set
+        if state.destination_dir and total_updated > 0:
+            planner = OrganizationPlanner(state.config)
+            state.plan = planner.create_plan(state.tracks)
+
+        return {
+            "status": "success",
+            "total_updated": total_updated,
+            "resolutions": resolutions,
+            "plan": [p.to_dict() for p in state.plan] if state.plan else [],
+        }
+
+
+@app.post("/api/fingerprint-track")
+def api_fingerprint_track(req: FingerprintRequest):
+    with state.lock:
+        if req.index < 0 or req.index >= len(state.tracks):
+            raise HTTPException(status_code=400, detail="Invalid track index.")
+
+        track = state.tracks[req.index]
+        result = state.fingerprinter.identify_track(track.file_path)
+
+        # If match was found, allow applying it
+        if result.get("matched") and result.get("top_match"):
+            top = result["top_match"]
+            return {
+                "status": "matched",
+                "track_index": req.index,
+                "suggested": {
+                    "artist": top.get("artist"),
+                    "title": top.get("title"),
+                    "album": top.get("album"),
+                    "score": top.get("score"),
+                },
+                "details": result,
+            }
+
+        return {"status": "result", "track_index": req.index, "details": result}
 
 
 def _run_copy_worker():

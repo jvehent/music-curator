@@ -81,8 +81,55 @@ class CuratorConfig:
     id3_version: str = "2.3"         # ID3v2.3 (UTF-16)
     artwork_action: Literal["strip", "resize_500", "keep"] = "strip"  # Prevent import hanging
     
+    # Smart AI & Audio Fingerprinting Settings
+    gemini_api_key: Optional[str] = None
+    acoustid_api_key: Optional[str] = None
+    gemini_model: str = "gemini-2.5-flash"
+
     write_tags_to_destination: bool = True
     copy_album_art: bool = False     # False for Uconnect to prevent non-audio clutter
     conflict_strategy: Literal["suffix", "skip", "overwrite"] = "suffix"
     use_online_lookup: bool = False
     clean_title_regex: bool = True
+
+
+CONFIG_FILE = Path(__file__).parent.parent / "config.json"
+
+
+def load_persistent_config() -> CuratorConfig:
+    """Load config from config.json if present, falling back to environment variables."""
+    cfg = CuratorConfig()
+    cfg.gemini_api_key = os.getenv("GEMINI_API_KEY")
+    cfg.acoustid_api_key = os.getenv("ACOUSTID_API_KEY")
+
+    if CONFIG_FILE.exists():
+        try:
+            import json
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            if "gemini_api_key" in data and data["gemini_api_key"]:
+                cfg.gemini_api_key = data["gemini_api_key"]
+            if "acoustid_api_key" in data and data["acoustid_api_key"]:
+                cfg.acoustid_api_key = data["acoustid_api_key"]
+            if "artwork_action" in data:
+                cfg.artwork_action = data["artwork_action"]
+            if "uconnect_mode" in data:
+                cfg.uconnect_mode = data["uconnect_mode"]
+            if "gemini_model" in data:
+                cfg.gemini_model = data["gemini_model"]
+        except Exception:
+            pass
+
+    return cfg
+
+
+def save_persistent_config(data: dict):
+    """Save persistent user settings to config.json."""
+    import json
+    current = {}
+    if CONFIG_FILE.exists():
+        try:
+            current = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    current.update(data)
+    CONFIG_FILE.write_text(json.dumps(current, indent=2), encoding="utf-8")
