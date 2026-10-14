@@ -1,6 +1,17 @@
 import argparse
 import sys
 from pathlib import Path
+
+# Ensure UTF-8 output on Windows consoles
+if sys.platform == "win32":
+    try:
+        if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8")
+        if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeRemainingColumn
@@ -11,7 +22,7 @@ from .organizer.planner import OrganizationPlanner
 from .organizer.copier import MusicCopier
 from .organizer.manifest import write_manifests
 
-console = Console()
+console = Console(force_terminal=False)
 
 
 def scan_cmd(args):
@@ -37,7 +48,7 @@ def scan_cmd(args):
 
         tracks, art_map = scanner.scan_files(progress_cb=cb)
 
-    console.print(f"\n[green]✓ Found {len(tracks)} audio files and {len(art_map)} album artwork folders.[/green]\n")
+    console.print(f"\n[green][OK] Found {len(tracks)} audio files and {len(art_map)} album artwork folders.[/green]\n")
 
     # Display preview table
     table = Table(title="Audio Files Sample Preview", show_lines=True)
@@ -90,7 +101,7 @@ def organize_cmd(args):
     planner = OrganizationPlanner(cfg)
     plan = planner.create_plan(tracks)
 
-    console.print(f"[green]✓ Plan generated for {len(plan)} tracks.[/green]\n")
+    console.print(f"[green][OK] Plan generated for {len(plan)} tracks.[/green]\n")
 
     # Table preview
     table = Table(title="Planned Organization (Sample)", show_lines=True)
@@ -139,7 +150,7 @@ def organize_cmd(args):
 
         completed = copier.execute_plan(plan, album_art_map=art_map, progress_cb=cb)
 
-    console.print(f"\n[bold green]✓ Done! {len(completed)} files safely copied to {dest}[/bold green]")
+    console.print(f"\n[bold green][OK] Done! {len(completed)} files safely copied to {dest}[/bold green]")
     console.print("[dim]Original files in source directory remain untouched.[/dim]\n")
 
 
