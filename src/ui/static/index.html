@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Harmoniq - Music Curator & Organizer</title>
+  <meta name="description" content="Intelligent, non-destructive music library organizer and metadata relabeler for Windows.">
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220%22%200%22%20100%22%20100%22><text y=%22.9em%22 font-size=%2290%22>🎵</text></svg>">
+</head>
+<body>
+
+  <!-- Header -->
+  <header class="app-header">
+    <div class="brand">
+      <div class="brand-icon">🎵</div>
+      <div class="brand-text">
+        <h1>Harmoniq Curator</h1>
+        <p>Intelligent, Non-Destructive Music Library Organizer</p>
+      </div>
+    </div>
+    <div class="header-status-badge">
+      <div class="status-dot"></div>
+      <span id="systemStatus">Ready & Idle</span>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- Directory Pickers -->
+    <section class="glass-card">
+      <div class="directory-grid">
+        
+        <!-- Source Box -->
+        <div class="folder-box">
+          <div class="folder-header">
+            <span class="folder-title">📂 Source Music Directory</span>
+            <span class="folder-badge badge-source">Read Only (Protected)</span>
+          </div>
+          <div class="input-group">
+            <input type="text" id="sourcePath" class="path-input" placeholder="e.g. C:\MyDisorganizedMusic" />
+          </div>
+          <p class="helper-text">Original files will <strong>never</strong> be modified, moved, or deleted.</p>
+        </div>
+
+        <!-- Destination Box -->
+        <div class="folder-box">
+          <div class="folder-header">
+            <span class="folder-title">📁 Clean Target Directory</span>
+            <span class="folder-badge badge-target">Output: &lt;Artist&gt; / &lt;Album&gt;</span>
+          </div>
+          <div class="input-group">
+            <input type="text" id="destPath" class="path-input" placeholder="e.g. C:\CleanMusicLibrary" />
+          </div>
+          <p class="helper-text">Destination structure: <code>&lt;Target&gt; / &lt;Artist&gt; / &lt;Album&gt; / [Track - Title.ext]</code></p>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Actions and Options Strip -->
+    <section class="glass-card action-strip">
+      <div class="action-options">
+        <label class="checkbox-label" title="Standardize and embed clean metadata tags into newly copied audio files">
+          <input type="checkbox" id="optWriteTags" checked />
+          Write Clean Tags to Copied Files
+        </label>
+        <label class="checkbox-label" title="Copy cover.jpg, folder.jpg and artwork files into destination album folders">
+          <input type="checkbox" id="optCopyArt" checked />
+          Copy Album Artwork
+        </label>
+      </div>
+
+      <div class="buttons-group">
+        <button id="btnScan" class="btn btn-outline" onclick="triggerScan()">
+          🔍 Scan & Analyze
+        </button>
+        <button id="btnPlan" class="btn btn-secondary" onclick="triggerPlan()" disabled>
+          📋 Preview Plan
+        </button>
+        <button id="btnExecute" class="btn btn-primary" onclick="triggerExecute()" disabled>
+          ⚡ Start Non-Destructive Copy
+        </button>
+      </div>
+    </section>
+
+    <!-- Real-time Progress Bar Card (Hidden by default) -->
+    <section id="progressCard" class="glass-card progress-card">
+      <div class="progress-header">
+        <div>
+          <h3 id="progressTitle" style="font-size: 1.1rem; font-weight: 600;">Copying Library...</h3>
+          <p id="progressCurrentFile" style="font-size: 0.85rem; color: var(--accent-cyan);">Initializing...</p>
+        </div>
+        <div style="display: flex; gap: 0.5rem;">
+          <button id="btnOpenDest" class="btn btn-outline" style="display: none;" onclick="openDestFolder()">
+            📂 Open Destination Folder
+          </button>
+          <button id="btnCancel" class="btn btn-danger" onclick="triggerCancel()">
+            Stop / Cancel
+          </button>
+        </div>
+      </div>
+      <div class="progress-bar-outer">
+        <div id="progressBar" class="progress-bar-inner"></div>
+      </div>
+      <div class="progress-details">
+        <span id="progressFileCount">0 / 0 Files</span>
+        <span id="progressSpeed">0.0 MB/s</span>
+        <span id="progressPercent">0%</span>
+      </div>
+    </section>
+
+    <!-- Metrics Banner -->
+    <section id="metricsBanner" class="stats-banner" style="display: none;">
+      <div class="stat-pill cyan">
+        <span class="stat-label">Total Audio Tracks</span>
+        <span id="statTotalTracks" class="stat-value">0</span>
+        <span id="statFormats" class="stat-subtext">MP3: 0 | OGG: 0 | WAV: 0</span>
+      </div>
+      <div class="stat-pill violet">
+        <span class="stat-label">Total Size</span>
+        <span id="statTotalSize" class="stat-value">0 MB</span>
+        <span id="statArtCount" class="stat-subtext">0 Artwork folders detected</span>
+      </div>
+      <div class="stat-pill emerald">
+        <span class="stat-label">High Confidence</span>
+        <span id="statHighConf" class="stat-value">0</span>
+        <span class="stat-subtext">Verified audio tags match</span>
+      </div>
+      <div class="stat-pill amber">
+        <span class="stat-label">Inferred / Warnings</span>
+        <span id="statInferred" class="stat-value">0</span>
+        <span class="stat-subtext">Path heuristics or fallback used</span>
+      </div>
+    </section>
+
+    <!-- Plan & Track Table Section -->
+    <section id="tableSection" class="glass-card table-container" style="display: none;">
+      <div class="table-controls">
+        <input type="text" id="tableSearch" class="search-input" placeholder="Search by artist, album, title or filename..." oninput="filterTable()" />
+        
+        <div class="filter-pills">
+          <button class="filter-pill active" onclick="setFilter('all', this)">All Tracks (<span id="countAll">0</span>)</button>
+          <button class="filter-pill" onclick="setFilter('ready', this)">Ready (<span id="countReady">0</span>)</button>
+          <button class="filter-pill" onclick="setFilter('warning', this)">Warnings (<span id="countWarning">0</span>)</button>
+          <button class="filter-pill" onclick="setFilter('conflict', this)">Conflicts (<span id="countConflict">0</span>)</button>
+        </div>
+      </div>
+
+      <div class="table-wrapper">
+        <table class="music-table">
+          <thead>
+            <tr>
+              <th style="width: 40px;">Play</th>
+              <th>Original vs. Proposed Reorganized Path</th>
+              <th>Artist</th>
+              <th>Album</th>
+              <th>Title</th>
+              <th>Track #</th>
+              <th>Format</th>
+              <th>Confidence</th>
+              <th style="text-align: right;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="trackTableBody">
+            <!-- Dynamically populated -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Floating Audio Player -->
+  <aside id="audioPlayerBar" class="audio-player-bar" style="display: none;">
+    <div class="player-info">
+      <div class="player-art">🎵</div>
+      <div class="player-track-details">
+        <h4 id="nowPlayingTitle">Song Title</h4>
+        <p id="nowPlayingArtist">Artist Name</p>
+      </div>
+    </div>
+    <audio id="nativeAudio" class="native-audio" controls preload="metadata"></audio>
+    <button class="btn btn-outline" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="closePlayer()">✕</button>
+  </aside>
+
+  <!-- Edit Metadata Modal -->
+  <div id="editModal" class="modal-overlay">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Edit Track Details</h3>
+        <button class="close-btn" onclick="closeEditModal()">×</button>
+      </div>
+      <div class="form-group">
+        <label>Artist</label>
+        <input type="text" id="editArtist" class="form-input" />
+      </div>
+      <div class="form-group">
+        <label>Album</label>
+        <input type="text" id="editAlbum" class="form-input" />
+      </div>
+      <div class="form-group">
+        <label>Title</label>
+        <input type="text" id="editTitle" class="form-input" />
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+        <div class="form-group">
+          <label>Track #</label>
+          <input type="number" id="editTrackNum" class="form-input" />
+        </div>
+        <div class="form-group">
+          <label>Year</label>
+          <input type="number" id="editYear" class="form-input" />
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="searchMusicBrainzForCurrent()">🌐 Lookup on MusicBrainz</button>
+        <button class="btn btn-primary" onclick="saveTrackEdit()">Save Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
