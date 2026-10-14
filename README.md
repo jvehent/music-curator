@@ -1,46 +1,43 @@
-# Harmoniq - Music Curator & Library Organizer
+# Harmoniq - Music Curator & Library Organizer (Uconnect Edition)
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Platform Windows](https://img.shields.io/badge/platform-Windows-0078D6.svg)](https://www.microsoft.com/windows/)
+[![Uconnect Compatible](https://img.shields.io/badge/Uconnect-430N%20%2F%20730N-success.svg)](https://www.driveuconnect.com/)
 [![License MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-**Harmoniq** is an intelligent, **strictly non-destructive** music curation and organization tool for Windows. It scans vast, disorganized collections of music files (`.mp3`, `.ogg`, `.wav`, `.flac`, `.m4a`), analyzes embedded audio tags and folder hierarchies, fills in missing metadata through path heuristics or MusicBrainz, and safely copies the files into a clean structure:
+**Harmoniq** is an intelligent, **strictly non-destructive** music curation and organization tool for Windows, specifically engineered for strict automotive infotainment systems such as **Uconnect 430N / 730N** as well as standard clean library management.
+
+It scans vast, disorganized collections of music files (`.mp3`, `.ogg`, `.wav`), analyzes embedded audio tags and directory hierarchies, corrects and relabels metadata, and safely copies files into an optimized 2-tier structure:
 
 ```
 <Target Directory>/
-  ├── <Artist>/
-  │     ├── <Album>/
-  │     │     ├── 01 - Track Title.mp3
-  │     │     ├── 02 - Track Title.ogg
-  │     │     ├── 03 - Track Title.wav
-  │     │     └── folder.jpg (album art preserved)
+  ├── <Artist (<= 32 chars)>/
+  │     ├── <Album (<= 32 chars)>/
+  │     │     ├── 01 - Track Title.mp3 (<= 32 chars)
+  │     │     ├── 02 - Track Title.mp3
+  │     │     └── 1-01 - MultiDisc Track.mp3
 ```
 
 > **Safety Guarantee:** Your original music directory is treated as **strictly read-only**. Files are never moved, renamed, or modified in the source folder.
 
 ---
 
-## ✨ Features
+## 🚗 Uconnect 430N / 730N Critical Rules Compliance
 
-- 🛡️ **Non-Destructive Copy Engine:** Copies files to a new destination without ever altering or touching the source files.
-- 🏷️ **Multi-Tier Metadata Detection:**
-  - **Tier 1:** Native tag extraction (`ID3v2.3`, `ID3v2.4`, `ID3v1` for MP3; Vorbis comments for OGG; RIFF/WAVE chunks for WAV; FLAC/M4A).
-  - **Tier 2:** Smart path heuristics detecting `<Style>/<Artist>/<Album>/...` or `<Artist>/<Album>/...`, disc folders (`CD 1`, `Disc 2`), and release years (e.g. `1973 - Dark Side` or `Abbey Road (1969)`).
-  - **Tier 3:** Intelligent filename parsing (e.g. `01 - Title`, `01. Title`, `Artist - Title`).
-  - **Tier 4:** Integrated **MusicBrainz API** lookup for automatic online verification.
-- 🖥️ **State-of-the-Art Windows Interface:**
-  - Glassmorphic dark-mode dashboard.
-  - Interactive reorganization diff table showing original path vs. proposed target path.
-  - Built-in audio snippet player to preview tracks directly in the app.
-  - Inline metadata editor for quick corrections.
-  - Real-time copy progress with transfer speed (MB/s), file counters, and cancel control.
-- 🪟 **Windows Native Resilience:**
-  - Automatically sanitizes invalid Windows characters (`\ / : * ? " < > |`).
-  - Guards against reserved Windows device names (`CON`, `PRN`, `AUX`, `NUL`, `COM1-9`, `LPT1-9`).
-  - Prevents path collision with automatic numeric suffixing (e.g., `Song (1).mp3`).
-- 📊 **Audit Manifests:**
-  - Generates detailed `organization_manifest.json` and `organization_manifest.csv` (compatible with Excel) in the destination folder.
-- ⌨️ **Command-Line Interface:** Powerful CLI with rich terminal tables and progress bars for automated batch workflows.
+Harmoniq strictly enforces the 4 critical Uconnect constraints by default:
+
+1. **Max Directory Depth (Strictly 2 Folders Deep):**
+   - Files are organized strictly as `<Target>/<Artist>/<Album>/<Track.mp3>`.
+   - Multi-disc albums are kept in the album folder with disc-track numbering (e.g., `1-01 - Title.mp3` or `2-01 - Title.mp3`), completely eliminating 3rd-tier subfolders (`CD1`, `Disc 2`) that cause Uconnect indexers to truncate or skip files.
+2. **Standard ID3v2.3 (UTF-16) Tags:**
+   - Every file has verified, populated `Artist (TPE1)`, `Album (TALB)`, `Track Title (TIT2)`, and `Track Number (TRCK)`.
+   - Tags are saved strictly in **ID3v2.3** with UTF-16 encoding (along with ID3v1 fallback), preventing garbled characters or tracks falling back to "Unknown Artist".
+3. **Strict 32-Character ASCII Naming:**
+   - Folder and file names are kept **under 32 characters**.
+   - Accented characters are automatically transliterated (`é` → `e`, `ñ` → `n`, `ö` → `o`, etc.).
+   - Special characters (`/ \ : * ? " < > | '`) are eliminated, adhering to standard alphanumeric characters, spaces, and hyphens.
+4. **Stripping / Resizing Embedded Artwork:**
+   - Strips oversized embedded album art (or downscales to ≤ 500×500 px) to prevent MP3 header bloat that causes Uconnect import freezes, allowing the vehicle's internal Gracenote database to match art seamlessly.
 
 ---
 
@@ -62,17 +59,17 @@ This automatically launches the server and opens your browser at `http://localho
 
 #### Scan a source folder:
 ```powershell
-python -m src.cli scan "C:\Users\julie\Music\Disorganized"
+python -m src.cli scan "G:\My Drive\Music\Albums\Funk"
 ```
 
 #### Simulate reorganization (Dry Run):
 ```powershell
-python -m src.cli organize "C:\Users\julie\Music\Disorganized" "C:\Users\julie\Music\Clean" --dry-run
+python -m src.cli organize "G:\My Drive\Music\Albums\Funk" "D:\UconnectMusic" --dry-run
 ```
 
-#### Execute non-destructive copy:
+#### Execute non-destructive copy with artwork stripping:
 ```powershell
-python -m src.cli organize "C:\Users\julie\Music\Disorganized" "C:\Users\julie\Music\Clean"
+python -m src.cli organize "G:\My Drive\Music\Albums\Funk" "D:\UconnectMusic" --artwork-action strip
 ```
 
 ---
@@ -87,17 +84,17 @@ music-curator/
 ├── requirements.txt            # Python dependencies
 ├── .gitignore                  # Git ignore rules
 ├── src/
-│   ├── config.py               # Path sanitization and app configuration
-│   ├── scanner.py              # Recursive audio and artwork scanner
-│   ├── cli.py                  # Rich command-line interface
+│   ├── config.py               # Uconnect rules, path sanitization, and configuration
+│   ├── scanner.py              # Recursive audio scanner
+│   ├── cli.py                  # Rich command-line interface with Uconnect flags
 │   ├── metadata/
 │   │   ├── models.py           # TrackMetadata dataclasses
 │   │   ├── reader.py           # Mutagen reader (MP3, OGG, WAV, etc.)
-│   │   ├── writer.py           # Tag writer for destination files
+│   │   ├── writer.py           # Strict ID3v2.3 writer & artwork processor
 │   │   ├── heuristics.py       # Path and filename heuristics
 │   │   └── musicbrainz.py      # Online MusicBrainz lookup client
 │   ├── organizer/
-│   │   ├── planner.py          # Collision detection & target path planner
+│   │   ├── planner.py          # Collision detection, 2-tier depth, & 32-char planner
 │   │   ├── copier.py           # Safe non-destructive copy engine
 │   │   └── manifest.py         # JSON and CSV audit log generator
 │   └── ui/
@@ -109,7 +106,8 @@ music-curator/
 └── tests/
     ├── test_heuristics.py
     ├── test_planner.py
-    └── test_integration.py
+    ├── test_integration.py
+    └── test_uconnect.py
 ```
 
 ---
@@ -124,10 +122,6 @@ python -m pytest tests/
 
 ## 🐙 Publishing to GitHub
 
-To push this repository to your personal GitHub account:
-
-1. Create a new repository on [GitHub](https://github.com/new) (e.g. named `music-curator`).
-2. Add the remote and push:
 ```powershell
 git remote add origin https://github.com/<your-username>/music-curator.git
 git branch -M main

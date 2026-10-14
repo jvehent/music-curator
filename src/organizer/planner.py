@@ -46,24 +46,50 @@ class OrganizationPlanner:
     def __init__(self, config: CuratorConfig):
         self.config = config
 
-    def build_filename(self, track: TrackMetadata) -> str:
-        ext = track.format.lower().lstrip(".")
-        title = sanitize_component(track.title or track.file_path.stem, "Unknown Title")
+    def build_filename(self, track: TrackMetadata, collision_suffix: str = "") -> str:
+        """
+        Build clean filename respecting Uconnect naming rules:
+        - Max 32 characters total (including extension and suffix)
+        - Standard alphanumeric, spaces, and hyphens
+        - Disc prefix if disc > 1 (e.g. 1-01 - Title.mp3)
+        """
+        ext = track.format.lower().strip()
+        if not ext.startswith("."):
+            ext = f".{ext}"
 
-        # Format track number
+        # Clean title using Uconnect sanitization
+        max_title_len = self.config.max_component_length
+        raw_title = track.title or track.file_path.stem
+        clean_title = sanitize_component(
+            raw_title,
+            fallback="Track",
+            uconnect_mode=self.config.uconnect_mode,
+            max_length=max_title_len,
+        )
+
+        # Build track/disc prefix
         if track.disc_number and track.disc_number > 1 and track.track_number is not None:
-            prefix = f"{track.disc_number}-{track.track_number:02d}"
+            prefix = f"{track.disc_number}-{track.track_number:02d} - "
         elif track.track_number is not None:
-            prefix = f"{track.track_number:02d}"
+            prefix = f"{track.track_number:02d} - "
         else:
             prefix = ""
 
-        if prefix:
-            raw_name = f"{prefix} - {title}.{ext}"
-        else:
-            raw_name = f"{title}.{ext}"
+        if self.config.uconnect_mode:
+            # Enforce strict 32 character limit on total filename
+            # max_len = len(prefix) + len(title) + len(collision_suffix) + len(ext)
+            reserved_len = len(prefix) + len(collision_suffix) + len(ext)
+            avail_len = max(self.config.max_component_length - reserved_len, 3)
 
-        return sanitize_component(raw_name, fallback=f"track.{ext}")
+            truncated_title = clean_title[:avail_len].strip(" -")
+            if not truncated_title:
+                truncated_title = "Trk"
+
+            filename = f"{prefix}{truncated_title}{collision_suffix}{ext}"
+            return filename
+        else:
+            filename = f"{prefix}{clean_title}{collision_suffix}{ext}"
+            return sanitize_component(filename, fallback=f"track{ext}", uconnect_mode=False)
 
     def create_plan(self, tracks: List[TrackMetadata]) -> List[PlanItem]:
         plan_items: List[PlanItem] = []
@@ -72,27 +98,40 @@ class OrganizationPlanner:
         # Track used target paths to detect collisions
         allocated_paths: Dict[Path, int] = {}
 
-        for track in tracks:
-            artist_clean = sanitize_component(track.artist, fallback="Unknown Artist")
-            album_clean = sanitize_component(track.album, fallback="Unknown Album")
-            filename_clean = self.build_filename(track)
+        max_len = self.config.max_component_length if self.config.uconnect_mode else 120
 
+        for track in tracks:
+            # Strictly 2 levels deep: <target_dest> / <artist> / <album>
+            artist_clean = sanitize_component(
+                track.artist,
+                fallback="Unknown Artist",
+                uconnect_mode=self.config.uconnect_mode,
+                max_length=max_len,
+            )
+            album_clean = sanitize_component(
+                track.album,
+                fallback="Unknown Album",
+                uconnect_mode=self.config.uconnect_mode,
+                max_length=max_len,
+            )
+
+            # Generate target filename
+            filename_clean = self.build_filename(track)
             planned_target = target_dest / artist_clean / album_clean / filename_clean
 
             has_conflict = False
             notes = list(track.warnings)
 
-            # Check if this destination is already allocated in the current plan
+            # Check if this destination is already allocated
             if planned_target in allocated_paths:
                 has_conflict = True
                 allocated_paths[planned_target] += 1
                 count = allocated_paths[planned_target]
 
                 if self.config.conflict_strategy == "suffix":
-                    stem = Path(filename_clean).stem
-                    ext = Path(filename_clean).suffix
-                    resolved_filename = f"{stem} ({count}){ext}"
-                    planned_target = target_dest / artist_clean / album_clean / resolved_filename
+                    suffix = f" ({count})"
+                    filename_clean = self.build_filename(track, collision_suffix=suffix)
+                    planned_target = target_dest / artist_clean / album_clean / filename_clean
                     notes.append(f"Name collision resolved by appending suffix ({count})")
                 else:
                     notes.append("Target path collision detected")

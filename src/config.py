@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Literal
+from typing import Literal, Optional
+import unicodedata
 import re
 
 SUPPORTED_EXTENSIONS = {".mp3", ".ogg", ".wav", ".flac", ".m4a", ".aac", ".wma"}
@@ -13,17 +14,58 @@ RESERVED_NAMES = {
 }
 
 
-def sanitize_component(name: str, fallback: str = "Unknown") -> str:
-    """Sanitize a single path component (directory or file name) for Windows filesystem."""
+def sanitize_uconnect_string(text: str, max_length: int = 32, fallback: str = "Unknown") -> str:
+    """
+    Sanitize text strictly for Uconnect 430N/730N indexers:
+    - Transliterates accented characters (é -> e, ñ -> n, etc.)
+    - Removes all characters except standard alphanumeric, spaces, and hyphens
+    - Collapses multiple whitespace
+    - Enforces max length (default 32 characters)
+    """
+    if not text or not text.strip():
+        return fallback
+
+    # Transliterate accents to plain ASCII
+    s = unicodedata.normalize("NFKD", text).encode("ASCII", "ignore").decode("ASCII")
+
+    # Keep only standard alphanumeric, spaces, and hyphens
+    s = re.sub(r"[^a-zA-Z0-9 \-]", "", s)
+
+    # Collapse multiple spaces and hyphens
+    s = re.sub(r"\s+", " ", s).strip(" -")
+
+    if not s:
+        return fallback
+
+    # Check for Windows reserved names
+    if s.upper() in RESERVED_NAMES:
+        s = f"_{s}"
+
+    # Truncate to max_length, trimming trailing spaces or hyphens
+    s = s[:max_length].strip(" -")
+    return s if s else fallback
+
+
+def sanitize_component(
+    name: str,
+    fallback: str = "Unknown",
+    uconnect_mode: bool = True,
+    max_length: int = 32
+) -> str:
+    """Sanitize directory or file name for Windows and Uconnect."""
+    if uconnect_mode:
+        return sanitize_uconnect_string(name, max_length=max_length, fallback=fallback)
+
     if not name or not name.strip():
         return fallback
+
     clean = INVALID_WIN_CHARS.sub("_", name)
     clean = re.sub(r"\s+", " ", clean).strip(". ")
     if not clean:
         return fallback
     if clean.upper() in RESERVED_NAMES:
         clean = f"_{clean}"
-    return clean[:120]  # keep reasonable length for each component
+    return clean[:max_length]
 
 
 @dataclass
@@ -31,9 +73,16 @@ class CuratorConfig:
     source_dir: Path = field(default_factory=lambda: Path("."))
     destination_dir: Path = field(default_factory=lambda: Path("./organized_music"))
     dry_run: bool = True
+    
+    # Uconnect 430N / 730N Compatibility Rules
+    uconnect_mode: bool = True
+    max_component_length: int = 32  # Strict 32 char limit
+    max_directory_depth: int = 2     # <Root> / <Artist> / <Album> / <Track>
+    id3_version: str = "2.3"         # ID3v2.3 (UTF-16)
+    artwork_action: Literal["strip", "resize_500", "keep"] = "strip"  # Prevent import hanging
+    
     write_tags_to_destination: bool = True
-    copy_album_art: bool = True
+    copy_album_art: bool = False     # False for Uconnect to prevent non-audio clutter
     conflict_strategy: Literal["suffix", "skip", "overwrite"] = "suffix"
-    naming_template: str = "{track:02d} - {title}.{ext}"  # relative to <top>/<artist>/<album>/
-    use_online_lookup: bool = False  # MusicBrainz lookup
-    clean_title_regex: bool = True  # Strip track numbers/extensions from embedded titles
+    use_online_lookup: bool = False
+    clean_title_regex: bool = True

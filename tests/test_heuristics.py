@@ -4,10 +4,10 @@ from src.config import sanitize_component
 
 
 def test_clean_windows_component():
-    assert sanitize_component("AC/DC") == "AC_DC"
-    assert sanitize_component("Track: 01 *special*?") == "Track_ 01 _special__"
-    assert sanitize_component("CON") == "_CON"
-    assert sanitize_component("   ") == "Unknown"
+    assert sanitize_component("AC/DC", uconnect_mode=False) == "AC_DC"
+    assert sanitize_component("Track: 01 *special*?", uconnect_mode=False) == "Track_ 01 _special__"
+    assert sanitize_component("CON", uconnect_mode=False) == "_CON"
+    assert sanitize_component("   ", uconnect_mode=False) == "Unknown"
 
 
 def test_extract_year_from_album():

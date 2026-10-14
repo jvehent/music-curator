@@ -58,17 +58,51 @@
       </div>
     </section>
 
-    <!-- Actions and Options Strip -->
+    <!-- Uconnect 430N/730N Compatibility Controls -->
+    <section class="glass-card uconnect-banner">
+      <div class="uconnect-header">
+        <div class="uconnect-title-group">
+          <span class="uconnect-badge">🚗 Uconnect 430N / 730N Mode Active</span>
+          <h3>Infotainment Rules Enforcement</h3>
+          <p>Ensures flawless playback, fast indexing, and zero import hangs on vehicle drives.</p>
+        </div>
+        <div class="uconnect-rules-list">
+          <span class="rule-chip" title="Root / Artist / Album / Track">✓ Max 2 Folders Deep</span>
+          <span class="rule-chip" title="UTF-16 encoding for Artist, Album, Title, Track #">✓ Strict ID3v2.3 Tags</span>
+          <span class="rule-chip" title="No accents, max 32 chars per folder/file">✓ Max 32 Chars (ASCII)</span>
+        </div>
+      </div>
+
+      <div class="uconnect-controls-row">
+        <div class="control-item">
+          <label for="artworkAction">Embedded Artwork:</label>
+          <select id="artworkAction" class="select-dropdown">
+            <option value="strip" selected>Strip Artwork (Recommended - prevents 430N/730N import freeze)</option>
+            <option value="resize_500">Resize <= 500x500 pixels (Gracenote-friendly)</option>
+            <option value="keep">Keep Original Artwork</option>
+          </select>
+        </div>
+
+        <div class="control-item-checkbox">
+          <label class="checkbox-label" title="Standardize and embed clean ID3v2.3 tags into newly copied files">
+            <input type="checkbox" id="optWriteTags" checked />
+            Write Standard ID3v2.3 Tags
+          </label>
+        </div>
+
+        <div class="control-item-checkbox">
+          <label class="checkbox-label" title="Copy external cover.jpg files (off by default for Uconnect)">
+            <input type="checkbox" id="optCopyArt" />
+            Copy Folder Artwork
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <!-- Actions Strip -->
     <section class="glass-card action-strip">
-      <div class="action-options">
-        <label class="checkbox-label" title="Standardize and embed clean metadata tags into newly copied audio files">
-          <input type="checkbox" id="optWriteTags" checked />
-          Write Clean Tags to Copied Files
-        </label>
-        <label class="checkbox-label" title="Copy cover.jpg, folder.jpg and artwork files into destination album folders">
-          <input type="checkbox" id="optCopyArt" checked />
-          Copy Album Artwork
-        </label>
+      <div style="font-size: 0.9rem; color: var(--text-muted);">
+        Destination layout: <code>&lt;Target&gt; / &lt;Artist[:32]&gt; / &lt;Album[:32]&gt; / &lt;01 - Title[:23].mp3&gt;</code>
       </div>
 
       <div class="buttons-group">

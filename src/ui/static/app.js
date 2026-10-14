@@ -96,6 +96,8 @@ async function triggerPlan() {
         conflict_strategy: 'suffix',
         write_tags: document.getElementById('optWriteTags').checked,
         copy_art: document.getElementById('optCopyArt').checked,
+        uconnect_mode: true,
+        artwork_action: document.getElementById('artworkAction').value,
       })
     });
 

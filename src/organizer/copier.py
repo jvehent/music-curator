@@ -91,7 +91,13 @@ class MusicCopier:
 
                 # Optionally write tags to the newly copied destination file
                 if self.config.write_tags_to_destination:
-                    update_audio_tags(target_file, item.track)
+                    update_audio_tags(
+                        target_file,
+                        item.track,
+                        id3_version=self.config.id3_version,
+                        artwork_action=self.config.artwork_action,
+                        uconnect_mode=self.config.uconnect_mode,
+                    )
 
                 # Optionally copy album art once per album folder
                 if self.config.copy_album_art and album_art_map:

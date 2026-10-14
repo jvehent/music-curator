@@ -92,8 +92,11 @@ def organize_cmd(args):
         source_dir=source,
         destination_dir=dest,
         dry_run=args.dry_run,
+        uconnect_mode=not args.no_uconnect,
+        max_component_length=args.max_len,
+        artwork_action=args.artwork_action,
         write_tags_to_destination=not args.no_tags,
-        copy_album_art=not args.no_art,
+        copy_album_art=args.copy_art,
     )
 
     scanner = MusicScanner(source)
@@ -167,8 +170,11 @@ def main():
     p_org.add_argument("source", help="Source music directory")
     p_org.add_argument("destination", help="Target output directory")
     p_org.add_argument("--dry-run", action="store_true", help="Simulate without copying files")
+    p_org.add_argument("--no-uconnect", action="store_true", help="Disable Uconnect 430N/730N strict rules")
+    p_org.add_argument("--max-len", type=int, default=32, help="Max filename/folder character length (default: 32)")
+    p_org.add_argument("--artwork-action", choices=["strip", "resize_500", "keep"], default="strip", help="Embedded artwork handling (default: strip)")
+    p_org.add_argument("--copy-art", action="store_true", help="Copy folder artwork files (disabled by default for Uconnect)")
     p_org.add_argument("--no-tags", action="store_true", help="Do not write tags to copied files")
-    p_org.add_argument("--no-art", action="store_true", help="Do not copy album art")
 
     # serve
     p_serve = subparsers.add_parser("serve", help="Launch interactive Web UI")

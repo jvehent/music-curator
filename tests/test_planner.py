@@ -24,7 +24,7 @@ def test_planner_basic():
 
     assert item.target_artist_dir == "Queen"
     assert item.target_album_dir == "A Night at the Opera"
-    assert item.target_filename == "04 - You're My Best Friend.mp3"
+    assert item.target_filename == "04 - Youre My Best Friend.mp3"
     assert item.status == "ready"
 
 

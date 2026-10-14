@@ -43,7 +43,9 @@ class PlanRequest(BaseModel):
     destination_dir: str
     conflict_strategy: str = "suffix"
     write_tags: bool = True
-    copy_art: bool = True
+    copy_art: bool = False
+    uconnect_mode: bool = True
+    artwork_action: str = "strip"  # strip, resize_500, keep
 
 
 class UpdateTrackRequest(BaseModel):
@@ -111,6 +113,8 @@ def api_plan(req: PlanRequest):
         state.config.conflict_strategy = req.conflict_strategy
         state.config.write_tags_to_destination = req.write_tags
         state.config.copy_album_art = req.copy_art
+        state.config.uconnect_mode = req.uconnect_mode
+        state.config.artwork_action = req.artwork_action
 
         planner = OrganizationPlanner(state.config)
         state.plan = planner.create_plan(state.tracks)
