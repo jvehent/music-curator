@@ -1,7 +1,14 @@
 import os
+import sys
 import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, List
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
@@ -38,6 +45,38 @@ class SessionState:
         )
         self.fingerprinter: AcousticFingerprinter = AcousticFingerprinter(api_key=self.config.acoustid_api_key)
         self.lock = threading.Lock()
+
+        # Real-time Activity Logs & AI Progress State
+        self.activity_logs: List[Dict[str, Any]] = []
+        self.log_counter: int = 0
+        self.ai_cancel_requested: bool = False
+        self.ai_progress: Dict[str, Any] = {
+            "status": "idle",
+            "current_folder": "",
+            "current_index": 0,
+            "total_folders": 0,
+            "percent": 0,
+            "tracks_updated": 0,
+            "message": "Ready",
+            "resolutions": [],
+            "error": None
+        }
+
+    def add_log(self, level: str, title: str, message: str, details: Optional[str] = None) -> Dict[str, Any]:
+        with self.lock:
+            self.log_counter += 1
+            item = {
+                "id": self.log_counter,
+                "timestamp": datetime.now().strftime("%H:%M:%S"),
+                "level": level,  # "info", "ai", "success", "warning", "error"
+                "title": title,
+                "message": message,
+                "details": details
+            }
+            self.activity_logs.append(item)
+            if len(self.activity_logs) > 500:
+                self.activity_logs.pop(0)
+            return item
 
 state = SessionState()
 
@@ -76,8 +115,10 @@ class MBSearchRequest(BaseModel):
 def api_scan(req: ScanRequest):
     src = Path(req.source_dir).resolve()
     if not src.exists() or not src.is_dir():
+        state.add_log("error", "Scan Failed", f"Source directory does not exist: {req.source_dir}")
         raise HTTPException(status_code=400, detail="Source directory does not exist or is not a folder.")
 
+    state.add_log("info", "Scan Started", f"Scanning audio library: {src}")
     scanner = MusicScanner(src)
     tracks, art_map = scanner.scan_files()
 
@@ -98,6 +139,14 @@ def api_scan(req: ScanRequest):
         confidence[t.confidence] = confidence.get(t.confidence, 0) + 1
         total_size += t.file_size
 
+    fmt_str = ", ".join(f"{k.upper()}: {v}" for k, v in formats.items()) or "None"
+    state.add_log(
+        "success",
+        "Scan Complete",
+        f"Discovered {len(tracks)} audio tracks ({total_size / (1024*1024):.1f} MB) across {len(art_map)} artwork folders. Confidence: {confidence['high']} High, {confidence['medium'] + confidence['low']} Inferred/Warnings.",
+        details=f"Formats: {fmt_str}\nTotal Size: {total_size} bytes\nArtwork Folders: {len(art_map)}"
+    )
+
     return {
         "status": "success",
         "total_tracks": len(tracks),
@@ -113,6 +162,7 @@ def api_scan(req: ScanRequest):
 def api_plan(req: PlanRequest):
     with state.lock:
         if not state.tracks:
+            state.add_log("warning", "Plan Failed", "No tracks available to plan. Please scan a source directory first.")
             raise HTTPException(status_code=400, detail="No tracks scanned yet. Please scan a source directory first.")
 
         dest = Path(req.destination_dir).resolve()
@@ -135,13 +185,24 @@ def api_plan(req: PlanRequest):
             "uconnect_mode": req.uconnect_mode,
         })
 
+        ready_count = sum(1 for p in state.plan if p.status == "ready")
+        warning_count = sum(1 for p in state.plan if p.status == "warning")
+        conflict_count = sum(1 for p in state.plan if p.status == "conflict")
+
         summary = {
             "total_items": len(state.plan),
-            "ready_count": sum(1 for p in state.plan if p.status == "ready"),
-            "warning_count": sum(1 for p in state.plan if p.status == "warning"),
-            "conflict_count": sum(1 for p in state.plan if p.status == "conflict"),
+            "ready_count": ready_count,
+            "warning_count": warning_count,
+            "conflict_count": conflict_count,
             "items": [p.to_dict() for p in state.plan],
         }
+
+    state.add_log(
+        "success",
+        "Plan Ready",
+        f"Generated organization plan: {len(state.plan)} tracks mapped ({ready_count} ready, {warning_count} warnings, {conflict_count} conflicts).",
+        details=f"Target: {dest}\nUconnect Mode: {req.uconnect_mode}\nArtwork Action: {req.artwork_action}\nWrite Tags: {req.write_tags}"
+    )
 
     return summary
 
@@ -170,6 +231,8 @@ def api_update_track(req: UpdateTrackRequest):
 
         t.confidence = "high"
         t.detection_source = "manual"
+
+        state.add_log("info", "Track Edited", f"Track #{req.index + 1} updated manually: '{t.artist} - {t.title}' ({t.album}).")
 
         # Recompute plan if destination set
         if state.destination_dir:
@@ -294,7 +357,140 @@ def api_update_settings(req: SettingsRequest):
         )
 
         save_persistent_config(updates)
+        state.add_log("info", "Settings Updated", f"Configuration updated: model={state.config.gemini_model}, uconnect={state.config.uconnect_mode}, artwork={state.config.artwork_action}.")
         return {"status": "saved", "config": updates}
+
+
+def _run_ai_resolve_worker(groups: Dict[str, List[TrackMetadata]], source_dir: Optional[Path]):
+    with state.lock:
+        state.ai_cancel_requested = False
+        total_folders = len(groups)
+        state.ai_progress = {
+            "status": "running",
+            "current_folder": "Initializing...",
+            "current_index": 0,
+            "total_folders": total_folders,
+            "percent": 0,
+            "tracks_updated": 0,
+            "message": f"Starting AI analysis across {total_folders} folder(s)...",
+            "resolutions": [],
+            "error": None
+        }
+
+    state.add_log(
+        "ai",
+        "AI Resolution Started",
+        f"Processing {total_folders} album folder(s) using Gemini ({state.config.gemini_model})."
+    )
+
+    total_updated = 0
+    resolutions = []
+
+    for idx, (folder_name, folder_tracks) in enumerate(groups.items(), 1):
+        with state.lock:
+            if state.ai_cancel_requested:
+                state.ai_progress["status"] = "cancelled"
+                state.ai_progress["message"] = "AI Resolution cancelled by user."
+                state.add_log("warning", "AI Cancelled", "AI resolution stopped by user.")
+                break
+
+            state.ai_progress["current_folder"] = folder_name
+            state.ai_progress["current_index"] = idx
+            state.ai_progress["percent"] = int(((idx - 1) / total_folders) * 100)
+            state.ai_progress["message"] = f"Querying Gemini for '{folder_name}' ({len(folder_tracks)} tracks)..."
+
+        state.add_log(
+            "ai",
+            f"Querying Gemini [{idx}/{total_folders}]",
+            f"Analyzing folder '{folder_name}' ({len(folder_tracks)} tracks) with model {state.config.gemini_model}..."
+        )
+
+        rel = ""
+        if source_dir:
+            try:
+                rel = str(folder_tracks[0].file_path.parent.relative_to(source_dir))
+            except Exception:
+                pass
+
+        try:
+            res = state.ai_resolver.resolve_album_context(
+                folder_name=folder_name,
+                tracks=folder_tracks,
+                relative_path=rel
+            )
+        except Exception as e:
+            res = {"success": False, "error": str(e)}
+
+        with state.lock:
+            if res.get("success"):
+                updated = state.ai_resolver.apply_resolution(folder_tracks, res)
+                total_updated += updated
+                artist = res.get("artist") or "Unknown Artist"
+                album = res.get("album") or "Unknown Album"
+                year = res.get("year")
+                genre = res.get("genre")
+                reasoning = res.get("reasoning")
+
+                res_summary = {
+                    "folder": folder_name,
+                    "artist": artist,
+                    "album": album,
+                    "year": year,
+                    "genre": genre,
+                    "tracks_updated": updated,
+                    "reasoning": reasoning
+                }
+                resolutions.append(res_summary)
+                state.ai_progress["resolutions"].append(res_summary)
+                state.ai_progress["tracks_updated"] = total_updated
+
+                details_text = f"Artist: {artist}\nAlbum: {album}\nYear: {year or 'N/A'}\nGenre: {genre or 'N/A'}\nTracks Updated: {updated}"
+                if reasoning:
+                    details_text += f"\nReasoning: {reasoning}"
+
+                state.add_log(
+                    "success",
+                    f"Resolved: {artist} - {album}",
+                    f"Identified {updated} tracks in '{folder_name}' (Year: {year or 'N/A'}, Genre: {genre or 'N/A'}).",
+                    details=details_text
+                )
+            else:
+                err = res.get("error", "Unknown error")
+                if "402" in err or "RESOURCE_EXHAUSTED" in err:
+                    state.add_log(
+                        "error",
+                        f"Quota Exhausted: '{folder_name}'",
+                        "Gemini API returned 402 RESOURCE_EXHAUSTED. Please verify your Google AI Studio project billing or try another model in Settings.",
+                        details=err
+                    )
+                else:
+                    state.add_log(
+                        "warning",
+                        f"Unresolved: '{folder_name}'",
+                        f"AI could not identify metadata: {err}",
+                        details=err
+                    )
+
+            state.ai_progress["percent"] = int((idx / total_folders) * 100)
+
+    with state.lock:
+        if state.ai_progress["status"] != "cancelled":
+            state.ai_progress["status"] = "completed"
+            state.ai_progress["percent"] = 100
+            state.ai_progress["tracks_updated"] = total_updated
+            state.ai_progress["message"] = f"Complete: {total_updated} track(s) updated across {len(resolutions)} album(s)."
+
+        # Recompute plan if destination is set
+        if state.destination_dir and total_updated > 0:
+            planner = OrganizationPlanner(state.config)
+            state.plan = planner.create_plan(state.tracks)
+            state.add_log("info", "Plan Recomputed", f"Organization plan updated with {total_updated} newly canonicalized tracks.")
+
+    state.add_log(
+        "success",
+        "AI Resolution Completed",
+        f"Batch AI resolution completed. Total {total_updated} track(s) updated across {len(resolutions)} album(s)."
+    )
 
 
 @app.post("/api/ai-resolve")
@@ -304,6 +500,8 @@ def api_ai_resolve(req: AIResolveRequest):
             raise HTTPException(status_code=400, detail="No tracks scanned yet.")
         if not state.ai_resolver.is_configured():
             raise HTTPException(status_code=400, detail="Gemini API Key is not configured. Please enter your API key in Settings.")
+        if state.ai_progress.get("status") == "running":
+            raise HTTPException(status_code=400, detail="AI resolution is already in progress.")
 
         # Determine tracks to resolve
         if req.track_indices:
@@ -315,6 +513,7 @@ def api_ai_resolve(req: AIResolveRequest):
             target_tracks = [t for t in state.tracks if t.confidence in {"low", "medium"} or "Unknown" in t.artist or "Unknown" in t.album]
 
         if not target_tracks:
+            state.add_log("info", "AI Check", "No unknown or low-confidence tracks required AI resolution.")
             return {"status": "no_tracks", "message": "No matching tracks need AI resolution."}
 
         # Group by parent directory
@@ -322,45 +521,32 @@ def api_ai_resolve(req: AIResolveRequest):
         for t in target_tracks:
             groups.setdefault(t.file_path.parent.name, []).append(t)
 
-        resolutions = []
-        total_updated = 0
+        src_dir = state.source_dir
 
-        for folder_name, folder_tracks in groups.items():
-            rel = ""
-            if state.source_dir:
-                try:
-                    rel = str(folder_tracks[0].file_path.parent.relative_to(state.source_dir))
-                except Exception:
-                    pass
+    t = threading.Thread(target=_run_ai_resolve_worker, args=(groups, src_dir), daemon=True)
+    t.start()
 
-            res = state.ai_resolver.resolve_album_context(
-                folder_name=folder_name,
-                tracks=folder_tracks,
-                relative_path=rel
-            )
-            if res.get("success"):
-                updated = state.ai_resolver.apply_resolution(folder_tracks, res)
-                total_updated += updated
-                resolutions.append({
-                    "folder": folder_name,
-                    "artist": res.get("artist"),
-                    "album": res.get("album"),
-                    "year": res.get("year"),
-                    "genre": res.get("genre"),
-                    "tracks_updated": updated,
-                })
+    return {
+        "status": "started",
+        "total_folders": len(groups),
+        "total_tracks": len(target_tracks)
+    }
 
-        # Recompute plan if destination is set
-        if state.destination_dir and total_updated > 0:
-            planner = OrganizationPlanner(state.config)
-            state.plan = planner.create_plan(state.tracks)
 
-        return {
-            "status": "success",
-            "total_updated": total_updated,
-            "resolutions": resolutions,
-            "plan": [p.to_dict() for p in state.plan] if state.plan else [],
-        }
+@app.get("/api/ai-resolve/status")
+def api_ai_resolve_status():
+    with state.lock:
+        prog = dict(state.ai_progress)
+        if prog.get("status") == "completed" and state.plan:
+            prog["plan"] = [p.to_dict() for p in state.plan]
+        return prog
+
+
+@app.post("/api/ai-resolve/cancel")
+def api_ai_resolve_cancel():
+    with state.lock:
+        state.ai_cancel_requested = True
+    return {"status": "cancelling"}
 
 
 @app.post("/api/fingerprint-track")
@@ -370,11 +556,18 @@ def api_fingerprint_track(req: FingerprintRequest):
             raise HTTPException(status_code=400, detail="Invalid track index.")
 
         track = state.tracks[req.index]
+        state.add_log("info", "Acoustic Fingerprint", f"Generating audio fingerprint for track #{req.index + 1}: '{track.file_path.name}'...")
+
         result = state.fingerprinter.identify_track(track.file_path)
 
-        # If match was found, allow applying it
         if result.get("matched") and result.get("top_match"):
             top = result["top_match"]
+            state.add_log(
+                "success",
+                "Fingerprint Match",
+                f"AcoustID matched track #{req.index + 1}: '{top.get('artist')} - {top.get('title')}' (Score: {int(top.get('score', 0)*100)}%).",
+                details=f"Artist: {top.get('artist')}\nTitle: {top.get('title')}\nAlbum: {top.get('album')}\nScore: {top.get('score')}"
+            )
             return {
                 "status": "matched",
                 "track_index": req.index,
@@ -387,6 +580,7 @@ def api_fingerprint_track(req: FingerprintRequest):
                 "details": result,
             }
 
+        state.add_log("warning", "Fingerprint Result", f"AcoustID: {result.get('error') or 'No match found in AcoustID database.'}")
         return {"status": "result", "track_index": req.index, "details": result}
 
 
@@ -406,6 +600,7 @@ def _run_copy_worker():
     # Write manifests on finish
     if state.destination_dir:
         write_manifests(plan_copy, state.destination_dir)
+        state.add_log("success", "Copy Finished", f"Successfully copied files to '{state.destination_dir}'. Audit manifests saved.")
 
 
 @app.post("/api/execute")
@@ -424,6 +619,7 @@ def api_execute():
             total_bytes=sum(item.track.file_size for item in state.plan),
             status="running"
         )
+        state.add_log("info", "Copy Started", f"Starting non-destructive copy of {len(state.plan)} files to '{state.destination_dir}'...")
 
     t = threading.Thread(target=_run_copy_worker, daemon=True)
     t.start()
@@ -452,7 +648,28 @@ def api_cancel():
         if state.copier:
             state.copier.cancel()
         state.copy_progress.status = "cancelled"
+    state.add_log("warning", "Copy Cancelled", "Copy operation cancelled by user.")
     return {"status": "cancelling"}
+
+
+@app.get("/api/logs")
+def api_get_logs(since_id: int = Query(0)):
+    with state.lock:
+        new_logs = [log for log in state.activity_logs if log["id"] > since_id]
+        return {
+            "logs": new_logs,
+            "total_logs": len(state.activity_logs),
+            "latest_id": state.log_counter,
+            "ai_status": state.ai_progress.get("status", "idle"),
+            "copy_status": state.copy_progress.status,
+        }
+
+
+@app.post("/api/logs/clear")
+def api_clear_logs():
+    with state.lock:
+        state.activity_logs.clear()
+    return {"status": "cleared"}
 
 
 @app.get("/api/audio-stream")

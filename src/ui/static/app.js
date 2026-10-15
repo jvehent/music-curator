@@ -65,9 +65,12 @@ async function triggerScan() {
       destInput.value = sourcePath.replace(/[\\\/]+$/, '') + '_Organized';
     }
 
+    fetchActivityLogs();
+
   } catch (err) {
     alert(`Error: ${err.message}`);
     setStatus('Error during scan');
+    fetchActivityLogs();
   } finally {
     btnScan.disabled = false;
     btnScan.textContent = '🔍 Scan & Analyze';
@@ -114,9 +117,12 @@ async function triggerPlan() {
     document.getElementById('btnExecute').disabled = false;
     setStatus(`Plan ready: ${data.total_items} tracks mapped`);
 
+    fetchActivityLogs();
+
   } catch (err) {
     alert(`Error: ${err.message}`);
     setStatus('Error generating plan');
+    fetchActivityLogs();
   } finally {
     btnPlan.disabled = false;
     btnPlan.textContent = '📋 Preview Plan';
@@ -345,6 +351,7 @@ function startProgressPolling() {
       document.getElementById('progressFileCount').textContent = `${prog.current_index} / ${prog.total_files} Files`;
       document.getElementById('progressSpeed').textContent = `${prog.speed_mb_s} MB/s`;
       document.getElementById('progressCurrentFile').textContent = prog.current_file || 'Processing...';
+      fetchActivityLogs();
 
       if (prog.status === 'finished') {
         clearInterval(progressPollInterval);
@@ -353,11 +360,13 @@ function startProgressPolling() {
         document.getElementById('btnOpenDest').style.display = 'inline-flex';
         document.getElementById('btnCancel').style.display = 'none';
         document.getElementById('btnExecute').disabled = false;
+        fetchActivityLogs();
       } else if (prog.status === 'cancelled') {
         clearInterval(progressPollInterval);
         setStatus('Copy cancelled by user.');
         document.getElementById('progressTitle').textContent = 'Copy Cancelled';
         document.getElementById('btnExecute').disabled = false;
+        fetchActivityLogs();
       }
     } catch (err) {
       console.error('Progress poll error:', err);
@@ -491,14 +500,166 @@ function attachAutoSaveListeners() {
   }
 }
 
+// Activity Logs Engine & Real-time State
+let lastLogId = 0;
+let activeLogFilter = 'all';
+let aiPollInterval = null;
+let logsPollInterval = null;
+
+async function fetchActivityLogs() {
+  try {
+    const res = await fetch(`/api/logs?since_id=${lastLogId}`);
+    if (!res.ok) return;
+    const data = await res.json();
+
+    if (data.logs && data.logs.length > 0) {
+      renderNewLogs(data.logs);
+      lastLogId = data.latest_id;
+    }
+
+    // Update event counter badges
+    const countBadge = document.getElementById('logCountBadge');
+    if (countBadge) countBadge.textContent = `${data.total_logs} events`;
+    const headerBadge = document.getElementById('headerLogBadge');
+    if (headerBadge) headerBadge.textContent = data.total_logs;
+
+  } catch (err) {
+    console.error('Error fetching activity logs:', err);
+  }
+}
+
+function renderNewLogs(newLogs) {
+  const list = document.getElementById('activityLogList');
+  const empty = document.getElementById('activityLogEmpty');
+  if (!list) return;
+
+  if (empty) empty.style.display = 'none';
+
+  newLogs.forEach(log => {
+    const item = document.createElement('div');
+    item.className = `log-item log-level-${log.level}`;
+    item.dataset.level = log.level;
+
+    if (!matchesLogFilter(log.level, activeLogFilter)) {
+      item.style.display = 'none';
+    }
+
+    let badgeClass = 'badge-info';
+    let badgeText = log.level.toUpperCase();
+    if (log.level === 'ai') { badgeClass = 'badge-ai'; badgeText = 'AI'; }
+    else if (log.level === 'success') { badgeClass = 'badge-success'; badgeText = 'OK'; }
+    else if (log.level === 'warning') { badgeClass = 'badge-warning'; badgeText = 'WARN'; }
+    else if (log.level === 'error') { badgeClass = 'badge-error'; badgeText = 'ERR'; }
+
+    let detailsHtml = '';
+    if (log.details) {
+      detailsHtml = `
+        <details class="log-details">
+          <summary>View Details</summary>
+          <pre>${escapeHtml(log.details)}</pre>
+        </details>
+      `;
+    }
+
+    item.innerHTML = `
+      <span class="log-time">${escapeHtml(log.timestamp)}</span>
+      <span class="log-badge ${badgeClass}">${badgeText}</span>
+      <div class="log-content">
+        <span class="log-title">${escapeHtml(log.title)}:</span>
+        <span class="log-msg">${escapeHtml(log.message)}</span>
+        ${detailsHtml}
+      </div>
+    `;
+
+    list.appendChild(item);
+  });
+
+  // Auto-scroll if enabled
+  const chk = document.getElementById('chkAutoScroll');
+  if (chk && chk.checked) {
+    const consoleEl = document.getElementById('activityLogConsole');
+    if (consoleEl) {
+      consoleEl.scrollTop = consoleEl.scrollHeight;
+    }
+  }
+}
+
+function matchesLogFilter(level, filter) {
+  if (filter === 'all') return true;
+  if (filter === 'ai') return level === 'ai';
+  if (filter === 'success') return level === 'success';
+  if (filter === 'warn_err') return level === 'warning' || level === 'error';
+  return true;
+}
+
+function setLogFilter(filter, el) {
+  activeLogFilter = filter;
+  document.querySelectorAll('.log-filter-btn').forEach(btn => btn.classList.remove('active'));
+  if (el) el.classList.add('active');
+
+  const items = document.querySelectorAll('#activityLogList .log-item');
+  items.forEach(item => {
+    const lvl = item.dataset.level;
+    item.style.display = matchesLogFilter(lvl, filter) ? 'flex' : 'none';
+  });
+}
+
+function toggleLogCollapse() {
+  const consoleEl = document.getElementById('activityLogConsole');
+  const btn = document.getElementById('btnToggleLogCollapse');
+  if (!consoleEl) return;
+
+  if (consoleEl.classList.contains('collapsed')) {
+    consoleEl.classList.remove('collapsed');
+    if (btn) btn.textContent = '▲ Collapse';
+  } else {
+    consoleEl.classList.add('collapsed');
+    if (btn) btn.textContent = '▼ Expand';
+  }
+}
+
+async function clearLogs() {
+  try {
+    await fetch('/api/logs/clear', { method: 'POST' });
+    lastLogId = 0;
+    const list = document.getElementById('activityLogList');
+    if (list) list.innerHTML = '';
+    const empty = document.getElementById('activityLogEmpty');
+    if (empty) empty.style.display = 'block';
+    const countBadge = document.getElementById('logCountBadge');
+    if (countBadge) countBadge.textContent = '0 events';
+    const headerBadge = document.getElementById('headerLogBadge');
+    if (headerBadge) headerBadge.textContent = '0';
+  } catch (err) {
+    console.error('Failed to clear logs:', err);
+  }
+}
+
+function scrollToLogs() {
+  const sec = document.getElementById('activityLogSection');
+  if (sec) {
+    sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const consoleEl = document.getElementById('activityLogConsole');
+    if (consoleEl && consoleEl.classList.contains('collapsed')) {
+      toggleLogCollapse();
+    }
+  }
+}
+
 // Auto-run on page load
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', async () => {
     await loadAndApplyInitialSettings();
     attachAutoSaveListeners();
+    await fetchActivityLogs();
+    logsPollInterval = setInterval(fetchActivityLogs, 1500);
   });
 } else {
-  loadAndApplyInitialSettings().then(attachAutoSaveListeners);
+  loadAndApplyInitialSettings().then(() => {
+    attachAutoSaveListeners();
+    fetchActivityLogs();
+    logsPollInterval = setInterval(fetchActivityLogs, 1500);
+  });
 }
 
 // Settings Modal
@@ -534,19 +695,36 @@ async function saveSettings() {
     if (!res.ok) throw new Error('Server returned an error');
     alert('Settings saved to local config successfully!');
     closeSettingsModal();
-    // Refresh pre-population
+    // Refresh pre-population and logs
     await loadAndApplyInitialSettings();
+    fetchActivityLogs();
   } catch (err) {
     alert(`Failed to save settings: ${err.message}`);
   }
 }
 
-// AI Album Resolver
+// AI Album Resolver with Live Progress Bar & Activity Streaming
 async function triggerAiResolve() {
   const btn = document.getElementById('btnAiResolve');
   btn.disabled = true;
-  btn.textContent = '🤖 Analyzing with AI...';
-  setStatus('Resolving unknown album metadata using Gemini AI...');
+  btn.textContent = '🤖 Initializing AI...';
+  setStatus('Starting AI album resolution...');
+
+  const aiCard = document.getElementById('aiProgressCard');
+  if (aiCard) {
+    aiCard.style.display = 'block';
+    document.getElementById('aiProgressBadge').className = 'status-badge running';
+    document.getElementById('aiProgressBadge').textContent = 'Processing';
+    document.getElementById('aiProgressCurrentFolder').textContent = 'Preparing albums for Gemini discography lookup...';
+    document.getElementById('aiProgressBar').style.width = '0%';
+    document.getElementById('aiProgressPercent').textContent = '0%';
+    document.getElementById('aiProgressFolderCount').textContent = '0 / 0 Albums';
+    document.getElementById('aiProgressTracksUpdated').textContent = '0 Tracks Resolved';
+    document.getElementById('btnAiCancel').style.display = 'inline-flex';
+  }
+
+  // Ensure logs console is visible
+  scrollToLogs();
 
   try {
     const res = await fetch('/api/ai-resolve', {
@@ -560,35 +738,110 @@ async function triggerAiResolve() {
       if (data.detail && data.detail.includes('API Key is not configured')) {
         alert('Please configure your Gemini API Key in "AI & Fingerprint Settings" to use AI recognition.');
         openSettingsModal();
+        if (aiCard) aiCard.style.display = 'none';
+        btn.disabled = false;
+        btn.textContent = '🤖 AI Resolve Unknowns';
         return;
       }
-      throw new Error(data.detail || 'AI resolution failed');
+      throw new Error(data.detail || 'AI resolution failed to start');
     }
 
-    if (data.total_updated > 0) {
-      alert(`🎉 Gemini AI successfully resolved ${data.total_updated} tracks across ${data.resolutions.length} album(s)!`);
-      if (data.plan) {
-        allPlanItems = data.plan;
-        updateCounts();
-        renderTable();
-      }
-      setStatus(`AI Resolution complete: ${data.total_updated} tracks updated`);
-    } else {
+    if (data.status === 'no_tracks') {
       alert(data.message || 'No unknown tracks required AI resolution.');
+      if (aiCard) aiCard.style.display = 'none';
       setStatus('Ready');
+      btn.disabled = false;
+      btn.textContent = '🤖 AI Resolve Unknowns';
+      fetchActivityLogs();
+      return;
     }
+
+    startAiProgressPolling();
+
   } catch (err) {
     alert(`AI Resolution Error: ${err.message}`);
     setStatus('AI Resolution error');
-  } finally {
+    if (aiCard) aiCard.style.display = 'none';
     btn.disabled = false;
     btn.textContent = '🤖 AI Resolve Unknowns';
+    fetchActivityLogs();
+  }
+}
+
+function startAiProgressPolling() {
+  if (aiPollInterval) clearInterval(aiPollInterval);
+
+  aiPollInterval = setInterval(async () => {
+    try {
+      const res = await fetch('/api/ai-resolve/status');
+      if (!res.ok) return;
+      const prog = await res.json();
+
+      fetchActivityLogs();
+
+      document.getElementById('aiProgressBar').style.width = `${prog.percent}%`;
+      document.getElementById('aiProgressPercent').textContent = `${prog.percent}%`;
+      document.getElementById('aiProgressFolderCount').textContent = `${prog.current_index} / ${prog.total_folders} Albums`;
+      document.getElementById('aiProgressTracksUpdated').textContent = `${prog.tracks_updated} Tracks Resolved`;
+      document.getElementById('aiProgressCurrentFolder').textContent = prog.message || prog.current_folder || 'Processing...';
+
+      if (prog.status === 'completed') {
+        clearInterval(aiPollInterval);
+        aiPollInterval = null;
+
+        const badge = document.getElementById('aiProgressBadge');
+        badge.className = 'status-badge completed';
+        badge.textContent = 'Completed';
+        document.getElementById('btnAiCancel').style.display = 'none';
+
+        const btn = document.getElementById('btnAiResolve');
+        btn.disabled = false;
+        btn.textContent = '🤖 AI Resolve Unknowns';
+
+        setStatus(`✓ AI Resolution complete: ${prog.tracks_updated} tracks resolved across ${prog.resolutions ? prog.resolutions.length : 0} album(s)`);
+
+        if (prog.plan && prog.plan.length > 0) {
+          allPlanItems = prog.plan;
+          updateCounts();
+          renderTable();
+        } else {
+          triggerPlan();
+        }
+
+      } else if (prog.status === 'cancelled') {
+        clearInterval(aiPollInterval);
+        aiPollInterval = null;
+
+        const badge = document.getElementById('aiProgressBadge');
+        badge.className = 'status-badge cancelled';
+        badge.textContent = 'Cancelled';
+        document.getElementById('btnAiCancel').style.display = 'none';
+
+        const btn = document.getElementById('btnAiResolve');
+        btn.disabled = false;
+        btn.textContent = '🤖 AI Resolve Unknowns';
+        setStatus('AI resolution cancelled by user.');
+      }
+
+    } catch (err) {
+      console.error('Error polling AI progress:', err);
+    }
+  }, 450);
+}
+
+async function triggerAiCancel() {
+  if (confirm('Cancel ongoing AI album resolution?')) {
+    await fetch('/api/ai-resolve/cancel', { method: 'POST' });
+    setStatus('Cancelling AI resolution...');
+    fetchActivityLogs();
   }
 }
 
 // Acoustic Fingerprint Matching
 async function fingerprintTrackDirect(index) {
   setStatus(`Generating acoustic fingerprint for track #${index + 1}...`);
+  fetchActivityLogs();
+
   try {
     const res = await fetch('/api/fingerprint-track', {
       method: 'POST',
@@ -596,6 +849,7 @@ async function fingerprintTrackDirect(index) {
       body: JSON.stringify({ index: index })
     });
     const data = await res.json();
+    fetchActivityLogs();
 
     if (data.status === 'matched') {
       const s = data.suggested;
@@ -613,6 +867,7 @@ async function fingerprintTrackDirect(index) {
         // Refresh plan
         await triggerPlan();
         setStatus(`Applied fingerprint match for "${s.title}"`);
+        fetchActivityLogs();
       }
     } else if (data.details && data.details.error) {
       alert(`Acoustic Fingerprint Result:\n${data.details.error}`);
@@ -634,3 +889,4 @@ async function fingerprintCurrentTrack() {
   await fingerprintTrackDirect(currentEditIndex);
   closeEditModal();
 }
+

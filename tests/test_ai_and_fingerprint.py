@@ -44,3 +44,47 @@ def test_ai_resolver_apply_resolution():
 
     assert tracks[1].title == "Shaft"
     assert tracks[1].track_number == 2
+
+
+def test_activity_logs_and_ai_status():
+    from fastapi.testclient import TestClient
+    from src.ui.server import app, state
+
+    client = TestClient(app)
+
+    # Clear logs initially
+    res = client.post("/api/logs/clear")
+    assert res.status_code == 200
+
+    # Add a mock log
+    state.add_log("ai", "Testing Gemini", "Resolving Funkadelic album", details="Tracks: 10")
+
+    # Fetch logs
+    res = client.get("/api/logs")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["total_logs"] >= 1
+    latest = data["logs"][-1]
+    assert latest["level"] == "ai"
+    assert latest["title"] == "Testing Gemini"
+    assert latest["message"] == "Resolving Funkadelic album"
+    assert "Tracks: 10" in latest["details"]
+
+    # Test since_id filtering
+    res_since = client.get(f"/api/logs?since_id={latest['id']}")
+    assert res_since.status_code == 200
+    assert len(res_since.json()["logs"]) == 0
+
+    # Test AI status endpoint
+    res_status = client.get("/api/ai-resolve/status")
+    assert res_status.status_code == 200
+    status_data = res_status.json()
+    assert "status" in status_data
+    assert "percent" in status_data
+    assert "tracks_updated" in status_data
+
+    # Test cancel endpoint
+    res_cancel = client.post("/api/ai-resolve/cancel")
+    assert res_cancel.status_code == 200
+    assert res_cancel.json()["status"] == "cancelling"
+

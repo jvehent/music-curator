@@ -19,7 +19,10 @@
         <p>Intelligent, Non-Destructive Music Library Organizer</p>
       </div>
     </div>
-    <div style="display: flex; align-items: center; gap: 1rem;">
+    <div style="display: flex; align-items: center; gap: 0.75rem;">
+      <button class="btn btn-outline" style="padding: 0.4rem 0.9rem; font-size: 0.85rem;" onclick="scrollToLogs()">
+        📜 Activity Logs <span id="headerLogBadge" class="header-log-badge">0</span>
+      </button>
       <button class="btn btn-outline" style="padding: 0.4rem 0.9rem; font-size: 0.85rem;" onclick="openSettingsModal()">
         ⚙️ AI & Fingerprint Settings
       </button>
@@ -146,6 +149,71 @@
         <span id="progressFileCount">0 / 0 Files</span>
         <span id="progressSpeed">0.0 MB/s</span>
         <span id="progressPercent">0%</span>
+      </div>
+    </section>
+
+    <!-- AI Resolution Progress Bar Card (Hidden by default) -->
+    <section id="aiProgressCard" class="glass-card ai-progress-card" style="display: none;">
+      <div class="progress-header">
+        <div class="ai-progress-title-wrap">
+          <div class="ai-pulse-icon">🤖</div>
+          <div>
+            <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+              <h3 id="aiProgressTitle" style="font-size: 1.1rem; font-weight: 700; color: #fff;">Gemini Album Resolution</h3>
+              <span id="aiProgressBadge" class="status-badge running">Processing</span>
+            </div>
+            <p id="aiProgressCurrentFolder" class="ai-subtext">Initializing AI discography lookup...</p>
+          </div>
+        </div>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+          <button id="btnAiCancel" class="btn btn-danger" style="padding: 0.45rem 0.9rem; font-size: 0.82rem;" onclick="triggerAiCancel()">
+            ⏹ Stop AI
+          </button>
+        </div>
+      </div>
+      <div class="progress-bar-outer">
+        <div id="aiProgressBar" class="progress-bar-inner ai-gradient"></div>
+      </div>
+      <div class="progress-details">
+        <span id="aiProgressFolderCount">0 / 0 Albums</span>
+        <span id="aiProgressTracksUpdated" style="color: #34d399; font-weight: 600;">0 Tracks Resolved</span>
+        <span id="aiProgressPercent">0%</span>
+      </div>
+    </section>
+
+    <!-- Real-time Activity & Action Logs Section -->
+    <section id="activityLogSection" class="glass-card activity-log-card">
+      <div class="activity-log-header">
+        <div class="log-header-left">
+          <span class="live-indicator"><span class="pulse-dot"></span> LIVE</span>
+          <h3 style="font-size: 1.05rem; font-weight: 600;">Activity & Process Logs</h3>
+          <span id="logCountBadge" class="log-count-badge">0 events</span>
+        </div>
+        <div class="log-controls">
+          <div class="log-filters">
+            <button class="log-filter-btn active" data-filter="all" onclick="setLogFilter('all', this)">All</button>
+            <button class="log-filter-btn" data-filter="ai" onclick="setLogFilter('ai', this)">🤖 AI</button>
+            <button class="log-filter-btn" data-filter="success" onclick="setLogFilter('success', this)">✓ Success</button>
+            <button class="log-filter-btn" data-filter="warn_err" onclick="setLogFilter('warn_err', this)">⚠ Alerts</button>
+          </div>
+          <label class="checkbox-label" style="font-size: 0.78rem;" title="Automatically scroll to latest logs as they happen">
+            <input type="checkbox" id="chkAutoScroll" checked />
+            Auto-scroll
+          </label>
+          <button class="btn btn-outline" style="padding: 0.35rem 0.75rem; font-size: 0.78rem;" onclick="clearLogs()" title="Clear activity log history">
+            🗑 Clear
+          </button>
+          <button id="btnToggleLogCollapse" class="btn btn-outline" style="padding: 0.35rem 0.75rem; font-size: 0.78rem;" onclick="toggleLogCollapse()">
+            ▲ Collapse
+          </button>
+        </div>
+      </div>
+
+      <div id="activityLogConsole" class="activity-log-console">
+        <div id="activityLogEmpty" class="activity-log-empty">
+          ⚡ Real-time logs will record scans, planning, AI album resolutions, acoustic fingerprinting, and file copying here.
+        </div>
+        <div id="activityLogList" class="activity-log-list"></div>
       </div>
     </section>
 
