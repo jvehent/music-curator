@@ -390,7 +390,19 @@ async function openSettingsModal() {
     if (data.acoustid_key_preview) {
       document.getElementById('acoustidApiKeyInput').placeholder = `Configured (${data.acoustid_key_preview})`;
     }
-    if (data.gemini_model) {
+    if (data.available_models && data.available_models.length > 0) {
+      const select = document.getElementById('geminiModelSelect');
+      select.innerHTML = '';
+      data.available_models.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m.id;
+        opt.textContent = m.name;
+        if (m.id === (data.gemini_model || 'gemini-3.8-flash')) {
+          opt.selected = true;
+        }
+        select.appendChild(opt);
+      });
+    } else if (data.gemini_model) {
       document.getElementById('geminiModelSelect').value = data.gemini_model;
     }
     if (data.has_fpcalc) {

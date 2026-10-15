@@ -13,6 +13,7 @@ def test_fingerprint_engine_detection():
 
 def test_ai_resolver_apply_resolution():
     resolver = GeminiAlbumResolver()
+    assert resolver.model == "gemini-3.8-flash"
 
     tracks = [
         TrackMetadata(file_path=Path("01 - UnknownTrack.mp3"), title="UnknownTrack", track_number=None, confidence="low"),

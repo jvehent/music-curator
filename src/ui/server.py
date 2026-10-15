@@ -29,10 +29,12 @@ class SessionState:
         self.tracks: List[TrackMetadata] = []
         self.art_map: Dict[Path, List[Path]] = {}
         self.plan: List[PlanItem] = []
-        self.config: CuratorConfig = load_persistent_config()
         self.copier: Optional[MusicCopier] = None
         self.copy_progress: CopyProgress = CopyProgress(status="idle")
-        self.ai_resolver: GeminiAlbumResolver = GeminiAlbumResolver(api_key=self.config.gemini_api_key)
+        self.ai_resolver: GeminiAlbumResolver = GeminiAlbumResolver(
+            api_key=self.config.gemini_api_key,
+            model=self.config.gemini_model or "gemini-3.8-flash"
+        )
         self.fingerprinter: AcousticFingerprinter = AcousticFingerprinter(api_key=self.config.acoustid_api_key)
         self.lock = threading.Lock()
 
@@ -180,7 +182,7 @@ def api_search_mb(req: MBSearchRequest):
 class SettingsRequest(BaseModel):
     gemini_api_key: Optional[str] = None
     acoustid_api_key: Optional[str] = None
-    gemini_model: Optional[str] = "gemini-2.5-flash"
+    gemini_model: Optional[str] = "gemini-3.8-flash"
 
 
 class AIResolveRequest(BaseModel):
@@ -192,6 +194,15 @@ class FingerprintRequest(BaseModel):
     index: int
 
 
+RECOMMENDED_MODELS = [
+    {"id": "gemini-3.8-flash", "name": "gemini-3.8-flash (Recommended - Latest & Fast)"},
+    {"id": "gemini-flash-latest", "name": "gemini-flash-latest (Auto-updated latest Flash)"},
+    {"id": "gemini-3.7-flash", "name": "gemini-3.7-flash"},
+    {"id": "gemini-3.5-flash", "name": "gemini-3.5-flash"},
+    {"id": "gemini-pro-latest", "name": "gemini-pro-latest (High reasoning capacity)"},
+]
+
+
 @app.get("/api/settings")
 def api_get_settings():
     with state.lock:
@@ -201,7 +212,8 @@ def api_get_settings():
             "has_acoustid_key": bool(state.config.acoustid_api_key),
             "acoustid_key_preview": f"{state.config.acoustid_api_key[:4]}...{state.config.acoustid_api_key[-3:]}" if state.config.acoustid_api_key else "",
             "has_fpcalc": state.fingerprinter.is_available(),
-            "gemini_model": state.config.gemini_model,
+            "gemini_model": state.config.gemini_model or "gemini-3.8-flash",
+            "available_models": RECOMMENDED_MODELS,
             "uconnect_mode": state.config.uconnect_mode,
             "artwork_action": state.config.artwork_action,
         }
@@ -211,19 +223,25 @@ def api_get_settings():
 def api_update_settings(req: SettingsRequest):
     with state.lock:
         updates = {}
+        if req.gemini_model is not None:
+            clean_m = req.gemini_model.replace("models/", "").strip()
+            state.config.gemini_model = clean_m
+            updates["gemini_model"] = clean_m
+
         if req.gemini_api_key is not None:
             state.config.gemini_api_key = req.gemini_api_key.strip() or None
             updates["gemini_api_key"] = state.config.gemini_api_key
-            state.ai_resolver = GeminiAlbumResolver(api_key=state.config.gemini_api_key, model=state.config.gemini_model)
+
+        # Re-initialize resolver with latest key and model
+        state.ai_resolver = GeminiAlbumResolver(
+            api_key=state.config.gemini_api_key,
+            model=state.config.gemini_model or "gemini-3.8-flash"
+        )
 
         if req.acoustid_api_key is not None:
             state.config.acoustid_api_key = req.acoustid_api_key.strip() or None
             updates["acoustid_api_key"] = state.config.acoustid_api_key
             state.fingerprinter = AcousticFingerprinter(api_key=state.config.acoustid_api_key)
-
-        if req.gemini_model is not None:
-            state.config.gemini_model = req.gemini_model
-            updates["gemini_model"] = req.gemini_model
 
         save_persistent_config(updates)
         return {"status": "saved"}

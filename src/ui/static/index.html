@@ -277,7 +277,7 @@
       <div class="form-group">
         <label>Google Gemini API Key (for LLM Album & Discography Resolution)</label>
         <input type="password" id="geminiApiKeyInput" class="form-input" placeholder="AIzaSy... (Leave blank if not changing)" />
-        <span class="helper-text">Used by Gemini 2.5 Flash to deduce unknown albums, tracklists & release years. Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" style="color: var(--accent-cyan);">aistudio.google.com</a></span>
+        <span class="helper-text">Used by Gemini 3.8 Flash to deduce unknown albums, tracklists & release years. Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" style="color: var(--accent-cyan);">aistudio.google.com</a></span>
       </div>
 
       <div class="form-group">
@@ -289,9 +289,11 @@
       <div class="form-group">
         <label>Gemini Model</label>
         <select id="geminiModelSelect" class="form-input" style="background: rgba(10, 15, 28, 0.8);">
-          <option value="gemini-2.5-flash" selected>gemini-2.5-flash (Fast, state-of-the-art music reasoning)</option>
-          <option value="gemini-1.5-flash">gemini-1.5-flash</option>
-          <option value="gemini-1.5-pro">gemini-1.5-pro</option>
+          <option value="gemini-3.8-flash" selected>gemini-3.8-flash (Recommended - Latest & Fastest)</option>
+          <option value="gemini-flash-latest">gemini-flash-latest (Auto-updated latest Flash)</option>
+          <option value="gemini-3.7-flash">gemini-3.7-flash</option>
+          <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+          <option value="gemini-pro-latest">gemini-pro-latest (High reasoning capacity)</option>
         </select>
       </div>
 
