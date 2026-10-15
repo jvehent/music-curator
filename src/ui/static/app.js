@@ -378,43 +378,132 @@ async function openDestFolder() {
   }
 }
 
-// Settings Modal
-async function openSettingsModal() {
+// Settings & Pre-population from Local Config
+async function loadAndApplyInitialSettings() {
   try {
     const res = await fetch('/api/settings');
+    if (!res.ok) return;
     const data = await res.json();
 
-    if (data.gemini_key_preview) {
-      document.getElementById('geminiApiKeyInput').placeholder = `Configured (${data.gemini_key_preview})`;
+    // Prepopulate main screen controls from config
+    if (data.source_dir && document.getElementById('sourcePath')) {
+      document.getElementById('sourcePath').value = data.source_dir;
     }
-    if (data.acoustid_key_preview) {
-      document.getElementById('acoustidApiKeyInput').placeholder = `Configured (${data.acoustid_key_preview})`;
+    if (data.destination_dir && document.getElementById('destPath')) {
+      document.getElementById('destPath').value = data.destination_dir;
     }
-    if (data.available_models && data.available_models.length > 0) {
-      const select = document.getElementById('geminiModelSelect');
+    if (data.artwork_action && document.getElementById('artworkAction')) {
+      document.getElementById('artworkAction').value = data.artwork_action;
+    }
+    if (data.write_tags !== undefined && document.getElementById('optWriteTags')) {
+      document.getElementById('optWriteTags').checked = data.write_tags;
+    }
+    if (data.copy_art !== undefined && document.getElementById('optCopyArt')) {
+      document.getElementById('optCopyArt').checked = data.copy_art;
+    }
+
+    // Prepopulate model select options
+    const select = document.getElementById('geminiModelSelect');
+    if (select && data.available_models && data.available_models.length > 0) {
       select.innerHTML = '';
       data.available_models.forEach(m => {
         const opt = document.createElement('option');
         opt.value = m.id;
         opt.textContent = m.name;
-        if (m.id === (data.gemini_model || 'gemini-3.8-flash')) {
+        if (m.id === (data.gemini_model || 'gemini-pro-latest')) {
           opt.selected = true;
         }
         select.appendChild(opt);
       });
-    } else if (data.gemini_model) {
-      document.getElementById('geminiModelSelect').value = data.gemini_model;
+    } else if (select && data.gemini_model) {
+      select.value = data.gemini_model;
     }
-    if (data.has_fpcalc) {
-      document.getElementById('fingerprintEngineStatus').textContent = '✓ Chromaprint (fpcalc 1.6.1) engine installed and ready';
-      document.getElementById('fingerprintEngineStatus').style.color = '#34d399';
-    } else {
-      document.getElementById('fingerprintEngineStatus').textContent = '⚠ fpcalc engine not found. Fingerprinting will be unavailable.';
-      document.getElementById('fingerprintEngineStatus').style.color = '#f87171';
+
+    // Prepopulate API Key inputs
+    const geminiInput = document.getElementById('geminiApiKeyInput');
+    if (geminiInput) {
+      if (data.gemini_api_key) {
+        geminiInput.value = data.gemini_api_key;
+      }
+      if (data.gemini_key_preview) {
+        geminiInput.placeholder = `Active (${data.gemini_key_preview})`;
+      }
     }
-  } catch (e) {
-    console.error('Failed to load settings:', e);
+
+    const acoustidInput = document.getElementById('acoustidApiKeyInput');
+    if (acoustidInput) {
+      if (data.acoustid_api_key) {
+        acoustidInput.value = data.acoustid_api_key;
+      }
+      if (data.acoustid_key_preview) {
+        acoustidInput.placeholder = `Active (${data.acoustid_key_preview})`;
+      }
+    }
+
+    // Fingerprint engine status
+    const fpStatus = document.getElementById('fingerprintEngineStatus');
+    if (fpStatus) {
+      if (data.has_fpcalc) {
+        fpStatus.textContent = '✓ Chromaprint (fpcalc 1.6.1) engine installed and ready';
+        fpStatus.style.color = '#34d399';
+      } else {
+        fpStatus.textContent = '⚠ fpcalc engine not found. Fingerprinting will be unavailable.';
+        fpStatus.style.color = '#f87171';
+      }
+    }
+  } catch (err) {
+    console.error('Failed to load initial settings from local config:', err);
   }
+}
+
+function attachAutoSaveListeners() {
+  const artSel = document.getElementById('artworkAction');
+  if (artSel) {
+    artSel.addEventListener('change', () => {
+      fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ artwork_action: artSel.value })
+      }).catch(e => console.error('Failed to auto-save artwork_action:', e));
+    });
+  }
+
+  const writeTags = document.getElementById('optWriteTags');
+  if (writeTags) {
+    writeTags.addEventListener('change', () => {
+      fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ write_tags: writeTags.checked })
+      }).catch(e => console.error('Failed to auto-save write_tags:', e));
+    });
+  }
+
+  const copyArt = document.getElementById('optCopyArt');
+  if (copyArt) {
+    copyArt.addEventListener('change', () => {
+      fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ copy_art: copyArt.checked })
+      }).catch(e => console.error('Failed to auto-save copy_art:', e));
+    });
+  }
+}
+
+// Auto-run on page load
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', async () => {
+    await loadAndApplyInitialSettings();
+    attachAutoSaveListeners();
+  });
+} else {
+  loadAndApplyInitialSettings().then(attachAutoSaveListeners);
+}
+
+// Settings Modal
+async function openSettingsModal() {
+  await loadAndApplyInitialSettings();
   document.getElementById('settingsModal').style.display = 'flex';
 }
 
@@ -427,18 +516,26 @@ async function saveSettings() {
   const acoustidKey = document.getElementById('acoustidApiKeyInput').value.trim();
   const model = document.getElementById('geminiModelSelect').value;
 
-  const payload = { gemini_model: model };
-  if (geminiKey) payload.gemini_api_key = geminiKey;
-  if (acoustidKey) payload.acoustid_api_key = acoustidKey;
+  const payload = {
+    gemini_model: model || 'gemini-pro-latest',
+    gemini_api_key: geminiKey || '',
+    acoustid_api_key: acoustidKey || '',
+    artwork_action: document.getElementById('artworkAction') ? document.getElementById('artworkAction').value : 'strip',
+    write_tags: document.getElementById('optWriteTags') ? document.getElementById('optWriteTags').checked : true,
+    copy_art: document.getElementById('optCopyArt') ? document.getElementById('optCopyArt').checked : false,
+  };
 
   try {
-    await fetch('/api/settings', {
+    const res = await fetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-    alert('Settings saved successfully!');
+    if (!res.ok) throw new Error('Server returned an error');
+    alert('Settings saved to local config successfully!');
     closeSettingsModal();
+    // Refresh pre-population
+    await loadAndApplyInitialSettings();
   } catch (err) {
     alert(`Failed to save settings: ${err.message}`);
   }

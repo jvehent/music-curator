@@ -24,8 +24,9 @@ app = FastAPI(title="Harmoniq - Music Curator & Organizer")
 # Global session state
 class SessionState:
     def __init__(self):
-        self.source_dir: Optional[Path] = None
-        self.destination_dir: Optional[Path] = None
+        self.config: CuratorConfig = load_persistent_config()
+        self.source_dir: Optional[Path] = self.config.source_dir if self.config.source_dir != Path(".") else None
+        self.destination_dir: Optional[Path] = self.config.destination_dir if self.config.destination_dir != Path("./organized_music") else None
         self.tracks: List[TrackMetadata] = []
         self.art_map: Dict[Path, List[Path]] = {}
         self.plan: List[PlanItem] = []
@@ -33,7 +34,7 @@ class SessionState:
         self.copy_progress: CopyProgress = CopyProgress(status="idle")
         self.ai_resolver: GeminiAlbumResolver = GeminiAlbumResolver(
             api_key=self.config.gemini_api_key,
-            model=self.config.gemini_model or "gemini-3.8-flash"
+            model=self.config.gemini_model or "gemini-pro-latest"
         )
         self.fingerprinter: AcousticFingerprinter = AcousticFingerprinter(api_key=self.config.acoustid_api_key)
         self.lock = threading.Lock()
@@ -85,6 +86,7 @@ def api_scan(req: ScanRequest):
         state.tracks = tracks
         state.art_map = art_map
         state.plan = []
+        save_persistent_config({"source_dir": str(src)})
 
     # Calculate statistics
     formats: Dict[str, int] = {}
@@ -124,6 +126,14 @@ def api_plan(req: PlanRequest):
 
         planner = OrganizationPlanner(state.config)
         state.plan = planner.create_plan(state.tracks)
+
+        save_persistent_config({
+            "destination_dir": str(dest),
+            "artwork_action": req.artwork_action,
+            "write_tags": req.write_tags,
+            "copy_art": req.copy_art,
+            "uconnect_mode": req.uconnect_mode,
+        })
 
         summary = {
             "total_items": len(state.plan),
@@ -182,7 +192,13 @@ def api_search_mb(req: MBSearchRequest):
 class SettingsRequest(BaseModel):
     gemini_api_key: Optional[str] = None
     acoustid_api_key: Optional[str] = None
-    gemini_model: Optional[str] = "gemini-3.8-flash"
+    gemini_model: Optional[str] = "gemini-pro-latest"
+    artwork_action: Optional[str] = None
+    uconnect_mode: Optional[bool] = None
+    write_tags: Optional[bool] = None
+    copy_art: Optional[bool] = None
+    source_dir: Optional[str] = None
+    destination_dir: Optional[str] = None
 
 
 class AIResolveRequest(BaseModel):
@@ -195,11 +211,11 @@ class FingerprintRequest(BaseModel):
 
 
 RECOMMENDED_MODELS = [
-    {"id": "gemini-3.8-flash", "name": "gemini-3.8-flash (Recommended - Latest & Fast)"},
-    {"id": "gemini-flash-latest", "name": "gemini-flash-latest (Auto-updated latest Flash)"},
+    {"id": "gemini-pro-latest", "name": "gemini-pro-latest (Default - Most Powerful & Intelligent)"},
+    {"id": "gemini-3.8-flash", "name": "gemini-3.8-flash (Latest Flash - Ultra Fast)"},
+    {"id": "gemini-flash-latest", "name": "gemini-flash-latest (Auto-updated Latest Flash)"},
     {"id": "gemini-3.7-flash", "name": "gemini-3.7-flash"},
     {"id": "gemini-3.5-flash", "name": "gemini-3.5-flash"},
-    {"id": "gemini-pro-latest", "name": "gemini-pro-latest (High reasoning capacity)"},
 ]
 
 
@@ -208,14 +224,20 @@ def api_get_settings():
     with state.lock:
         return {
             "has_gemini_key": bool(state.config.gemini_api_key),
+            "gemini_api_key": state.config.gemini_api_key or "",
             "gemini_key_preview": f"{state.config.gemini_api_key[:6]}...{state.config.gemini_api_key[-4:]}" if state.config.gemini_api_key else "",
             "has_acoustid_key": bool(state.config.acoustid_api_key),
+            "acoustid_api_key": state.config.acoustid_api_key or "",
             "acoustid_key_preview": f"{state.config.acoustid_api_key[:4]}...{state.config.acoustid_api_key[-3:]}" if state.config.acoustid_api_key else "",
             "has_fpcalc": state.fingerprinter.is_available(),
-            "gemini_model": state.config.gemini_model or "gemini-3.8-flash",
+            "gemini_model": state.config.gemini_model or "gemini-pro-latest",
             "available_models": RECOMMENDED_MODELS,
             "uconnect_mode": state.config.uconnect_mode,
             "artwork_action": state.config.artwork_action,
+            "write_tags": state.config.write_tags_to_destination,
+            "copy_art": state.config.copy_album_art,
+            "source_dir": str(state.source_dir) if state.source_dir else (str(state.config.source_dir) if state.config.source_dir != Path(".") else ""),
+            "destination_dir": str(state.destination_dir) if state.destination_dir else (str(state.config.destination_dir) if state.config.destination_dir != Path("./organized_music") else ""),
         }
 
 
@@ -225,26 +247,54 @@ def api_update_settings(req: SettingsRequest):
         updates = {}
         if req.gemini_model is not None:
             clean_m = req.gemini_model.replace("models/", "").strip()
-            state.config.gemini_model = clean_m
-            updates["gemini_model"] = clean_m
+            state.config.gemini_model = clean_m or "gemini-pro-latest"
+            updates["gemini_model"] = state.config.gemini_model
 
         if req.gemini_api_key is not None:
             state.config.gemini_api_key = req.gemini_api_key.strip() or None
             updates["gemini_api_key"] = state.config.gemini_api_key
-
-        # Re-initialize resolver with latest key and model
-        state.ai_resolver = GeminiAlbumResolver(
-            api_key=state.config.gemini_api_key,
-            model=state.config.gemini_model or "gemini-3.8-flash"
-        )
 
         if req.acoustid_api_key is not None:
             state.config.acoustid_api_key = req.acoustid_api_key.strip() or None
             updates["acoustid_api_key"] = state.config.acoustid_api_key
             state.fingerprinter = AcousticFingerprinter(api_key=state.config.acoustid_api_key)
 
+        if req.artwork_action is not None:
+            state.config.artwork_action = req.artwork_action
+            updates["artwork_action"] = req.artwork_action
+
+        if req.uconnect_mode is not None:
+            state.config.uconnect_mode = req.uconnect_mode
+            updates["uconnect_mode"] = req.uconnect_mode
+
+        if req.write_tags is not None:
+            state.config.write_tags_to_destination = req.write_tags
+            updates["write_tags"] = req.write_tags
+
+        if req.copy_art is not None:
+            state.config.copy_album_art = req.copy_art
+            updates["copy_art"] = req.copy_art
+
+        if req.source_dir is not None:
+            p = req.source_dir.strip()
+            if p:
+                state.source_dir = Path(p).resolve()
+                updates["source_dir"] = str(state.source_dir)
+
+        if req.destination_dir is not None:
+            p = req.destination_dir.strip()
+            if p:
+                state.destination_dir = Path(p).resolve()
+                updates["destination_dir"] = str(state.destination_dir)
+
+        # Re-initialize resolver with latest key and model
+        state.ai_resolver = GeminiAlbumResolver(
+            api_key=state.config.gemini_api_key,
+            model=state.config.gemini_model or "gemini-pro-latest"
+        )
+
         save_persistent_config(updates)
-        return {"status": "saved"}
+        return {"status": "saved", "config": updates}
 
 
 @app.post("/api/ai-resolve")

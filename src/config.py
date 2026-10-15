@@ -85,7 +85,7 @@ class CuratorConfig:
     # Smart AI & Audio Fingerprinting Settings
     gemini_api_key: Optional[str] = None
     acoustid_api_key: Optional[str] = None
-    gemini_model: str = "gemini-3.8-flash"
+    gemini_model: str = "gemini-pro-latest"
 
     write_tags_to_destination: bool = True
     copy_album_art: bool = False     # False for Uconnect to prevent non-audio clutter
@@ -111,12 +111,20 @@ def load_persistent_config() -> CuratorConfig:
                 cfg.gemini_api_key = data["gemini_api_key"]
             if "acoustid_api_key" in data and data["acoustid_api_key"]:
                 cfg.acoustid_api_key = data["acoustid_api_key"]
-            if "artwork_action" in data:
+            if "artwork_action" in data and data["artwork_action"]:
                 cfg.artwork_action = data["artwork_action"]
-            if "uconnect_mode" in data:
-                cfg.uconnect_mode = data["uconnect_mode"]
-            if "gemini_model" in data:
+            if "uconnect_mode" in data and data["uconnect_mode"] is not None:
+                cfg.uconnect_mode = bool(data["uconnect_mode"])
+            if "gemini_model" in data and data["gemini_model"]:
                 cfg.gemini_model = data["gemini_model"]
+            if "write_tags" in data and data["write_tags"] is not None:
+                cfg.write_tags_to_destination = bool(data["write_tags"])
+            if "copy_art" in data and data["copy_art"] is not None:
+                cfg.copy_album_art = bool(data["copy_art"])
+            if "source_dir" in data and data["source_dir"]:
+                cfg.source_dir = Path(data["source_dir"])
+            if "destination_dir" in data and data["destination_dir"]:
+                cfg.destination_dir = Path(data["destination_dir"])
         except Exception:
             pass
 
